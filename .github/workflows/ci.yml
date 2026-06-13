@@ -107,3 +107,24 @@ jobs:
         with:
           generate_release_notes: true
           token: ${{ secrets.GITHUB_TOKEN }}
+          body: |
+            ## 🐳 Docker Image
+            
+            This release is published as a multi-platform Docker image to the GitHub Container Registry (GHCR):
+            
+            ```bash
+            docker pull ghcr.io/the-dot-squad/unlostpaws-worker:${{ github.ref_name }}
+            ```
+            
+            ### Quick Start
+            To run this worker version locally or in production:
+            ```bash
+            docker run -d \
+              --name unlostpaws-worker \
+              --env-file .env \
+              -v unlostpaws-hf-cache:/app/.cache/huggingface \
+              ghcr.io/the-dot-squad/unlostpaws-worker:${{ github.ref_name }}
+            ```
+            
+            ---
+
