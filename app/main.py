@@ -77,6 +77,29 @@ async def main():
     # Instantiate the asynchronous Redis client using settings broker URL
     redis_client = create_redis_client()
 
+    # Verify connection to the Redis server before starting the consumer loop
+    try:
+        logger.info("Verifying connection to Redis...")
+        await redis_client.ping()
+        logger.info("Successfully connected to Redis.")
+    except Exception as exc:
+        logger.error("Failed to connect to Redis: %s", exc)
+        if "upstash.io" in settings.redis_url and settings.redis_url.startswith(
+            "redis://"
+        ):
+            logger.error(
+                "CRITICAL ERROR: Detected Upstash Redis URL using 'redis://' (non-SSL) protocol. "
+                "Upstash typically requires SSL/TLS. Please configure your REDIS_URL to use the 'rediss://' protocol "
+                "instead of 'redis://' to enable SSL."
+            )
+        else:
+            logger.error(
+                "CRITICAL ERROR: Could not establish a connection to the Redis server. "
+                "Please verify your REDIS_URL configuration and network connectivity."
+            )
+        await redis_client.aclose()
+        sys.exit(1)
+
     # Schedule the stream consumer task and the shutdown monitor task concurrently
     consumer_task = asyncio.create_task(run_consumer(redis_client))
     stop_task = asyncio.create_task(stop_event.wait())
