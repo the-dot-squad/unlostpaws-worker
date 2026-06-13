@@ -84,7 +84,9 @@ async def main():
         logger.info("Successfully connected to Redis.")
     except Exception as exc:
         logger.error("Failed to connect to Redis: %s", exc)
-        if "upstash.io" in settings.redis_url and settings.redis_url.startswith("redis://"):
+        if "upstash.io" in settings.redis_url and settings.redis_url.startswith(
+            "redis://"
+        ):
             logger.error(
                 "CRITICAL ERROR: Detected Upstash Redis URL using 'redis://' (non-SSL) protocol. "
                 "Upstash typically requires SSL/TLS. Please configure your REDIS_URL to use the 'rediss://' protocol "
