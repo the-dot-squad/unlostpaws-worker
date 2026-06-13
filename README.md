@@ -190,7 +190,7 @@ When the worker successfully completes processing, it sends an HTTP POST request
 ```json
 {
   "jobType": "listing",
-  "workerVersion": "0.1.1",
+  "workerVersion": "0.1.2",
   "matchModel": "google/siglip2-base-patch16-224",
   "safetyModel": "Falconsai/nsfw_image_detection",
   "embeddingModel": "google/siglip2-base-patch16-224",
