@@ -114,6 +114,9 @@ Create a `.env` file at the root of the project. The following settings are supp
 ### 1. Run Pre-built Image from GHCR (Recommended for Deployment)
 Since the worker is published on the GitHub Container Registry (GHCR), you can pull and run the container directly without cloning the codebase or building it locally:
 
+> [!NOTE]
+> The published GHCR image is a multi-platform build supporting both **`linux/amd64` (x86_64)** and **`linux/arm64`** (e.g., Raspberry Pi 4, Apple Silicon/AWS Graviton).
+
 1. **Configure Environment:** Create a local `.env` file containing your configurations (e.g., `REDIS_URL`).
 2. **Execute Container:** Pull and launch the daemon (mounting a persistent volume for the model cache):
    ```bash
@@ -187,7 +190,7 @@ When the worker successfully completes processing, it sends an HTTP POST request
 ```json
 {
   "jobType": "listing",
-  "workerVersion": "0.1.0",
+  "workerVersion": "0.1.1",
   "matchModel": "google/siglip2-base-patch16-224",
   "safetyModel": "Falconsai/nsfw_image_detection",
   "embeddingModel": "google/siglip2-base-patch16-224",

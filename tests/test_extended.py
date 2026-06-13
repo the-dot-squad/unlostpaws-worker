@@ -217,7 +217,7 @@ async def test_download_all_mixed_results():
 async def test_send_callback_success():
     payload = CallbackPayload(
         jobType="listing",
-        workerVersion="0.1.0",
+        workerVersion="0.1.1",
         matchModel="test",
         safetyModel="test",
         embeddingModel="test",
