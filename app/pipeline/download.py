@@ -36,6 +36,34 @@ class DecodedImage:
     image: Image.Image
 
 
+# Long-lived global HTTP client singleton to reuse TCP connections across worker jobs
+_client: httpx.AsyncClient | None = None
+
+
+def get_http_client() -> httpx.AsyncClient:
+    """
+    Retrieves the long-lived HTTP client singleton connection pool.
+    """
+    global _client
+    if _client is None:
+        _client = httpx.AsyncClient(
+            timeout=settings.download_timeout,
+            follow_redirects=True,
+        )
+    return _client
+
+
+async def close_http_client() -> None:
+    """
+    Closes the global HTTP client pool during worker daemon shutdown.
+    """
+    global _client
+    if _client is not None:
+        logger.info("Closing global HTTP client connection pool...")
+        await _client.aclose()
+        _client = None
+
+
 async def download_bytes(client: httpx.AsyncClient, url: str) -> bytes:
     """
     Fetches raw bytes of a single asset using an active HTTP client connection.
@@ -97,7 +125,7 @@ async def download_all(urls: list[str]) -> tuple[list[DecodedImage], list[dict]]
 
     Uses:
       - asyncio.Semaphore to throttle concurrency and prevent file descriptor / connection exhaustion.
-      - httpx.AsyncClient connection pooling for HTTP request reuse.
+      - A shared long-lived HTTP client singleton connection pool.
 
     Returns a tuple:
       - list[DecodedImage]: Successfully downloaded and decoded items.
@@ -107,26 +135,22 @@ async def download_all(urls: list[str]) -> tuple[list[DecodedImage], list[dict]]
     sem = asyncio.Semaphore(settings.max_concurrent_downloads)
     results: list[DecodedImage | tuple[str, Exception]] = []
 
-    # Configure the client connection pool
-    async with httpx.AsyncClient(
-        timeout=settings.download_timeout,
-        follow_redirects=True,  # Support CDN redirects automatically
-    ) as client:
+    client = get_http_client()
 
-        async def fetch(url: str):
-            async with sem:
-                try:
-                    data = await download_bytes(client, url)
-                    return decode_image(url, data)
-                except Exception as exc:
-                    # Capture, log, and return the exception instead of crash-terminating
-                    # the entire parallel download set.
-                    logger.exception("Download failed for URL: %s", url)
-                    return url, exc
+    async def fetch(url: str):
+        async with sem:
+            try:
+                data = await download_bytes(client, url)
+                return decode_image(url, data)
+            except Exception as exc:
+                # Capture, log, and return the exception instead of crash-terminating
+                # the entire parallel download set.
+                logger.exception("Download failed for URL: %s", url)
+                return url, exc
 
-        # Fire concurrent requests and gather results
-        gathered = await asyncio.gather(*[fetch(u) for u in urls])
-        results = list(gathered)
+    # Fire concurrent requests and gather results
+    gathered = await asyncio.gather(*[fetch(u) for u in urls])
+    results = list(gathered)
 
     # Sort results into success list vs failure logs
     decoded: list[DecodedImage] = []

@@ -64,7 +64,7 @@ Each processed image goes through the following pipeline stages:
 
 | Stage | Mechanism / Model | Description |
 | :--- | :--- | :--- |
-| **`quality`** | OpenCV Laplacian | Computes image resolution and blur score. Low variance of Laplacian indicates a blurry image. |
+| **`quality`** | NumPy Laplacian | Computes image resolution and blur score. Low variance of Laplacian indicates a blurry image. |
 | **`safety`** | `Falconsai/nsfw_image_detection` | Classifies whether content is safe or contains adult material. |
 | **`fingerprint`**| MD5 + Perceptual Hashing (pHash) | Generates a cryptographic MD5 (for exact duplicates) and a perceptual hash (for resized/reformatted near-duplicates). |
 | **`embed`** | `google/siglip2-base-patch16-224` | Generates a 768-dimensional vector embedding optimized for visual similarity and search. |
@@ -80,7 +80,7 @@ Choose the active profile based on your host server's CPU or GPU resources using
 | :--- | :---: | :---: | :---: | :--- |
 | **`dedup-only`** | CPU | 512 MB | 0 MB | Quality + fingerprinting checks only (No PyTorch/Transformers loaded). |
 | **`cpu-light`** | CPU | 1.5 GB | 0 MB | NSFW safety only (No animal matching embeddings). |
-| **`cpu-standard`** | CPU | 2.5 GB | 0 MB | Uses lightweight `DINO-v2-small` matching + NSFW safety. |
+| **`cpu-standard`** | CPU | 3.0 GB | 0 MB | Uses `SigLIP2` embeddings + NSFW safety (omits animal verification). |
 | **`cpu-quality`** | CPU | 4.0 GB | 0 MB | Uses `SigLIP2` matching + NSFW safety (**Default Development Profile**). |
 | **`gpu-standard`** | GPU | 4.0 GB | 4.0 GB | Uses `SigLIP2` + NSFW safety on GPU (**Default Production Profile**). |
 | **`gpu-quality`** | GPU | 4.0 GB | 6.0 GB | Uses `SigLIP2` + multi-class `strangerguardhf` NSFW on GPU. |
@@ -190,7 +190,7 @@ When the worker successfully completes processing, it sends an HTTP POST request
 ```json
 {
   "jobType": "listing",
-  "workerVersion": "0.1.2",
+  "workerVersion": "0.1.3",
   "matchModel": "google/siglip2-base-patch16-224",
   "safetyModel": "Falconsai/nsfw_image_detection",
   "embeddingModel": "google/siglip2-base-patch16-224",

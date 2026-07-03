@@ -7,16 +7,6 @@
 # Use Python 3.12 slim-debian image for a lightweight, secure, and production-ready foundation.
 FROM python:3.12-slim
 
-# Install system dependencies.
-# - libgl1: Required by OpenCV (cv2) for image manipulation tasks.
-# - libglib2.0-0: Required by OpenCV for system GLib event loops and resource tracking.
-# - --no-install-recommends: Avoids installing unnecessary packages to keep the image slim.
-# - rm -rf /var/lib/apt/lists/*: Cleans up the apt cache to minimize image layer size.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libgl1 \
-    libglib2.0-0 \
-    && rm -rf /var/lib/apt/lists/*
-
 # Establish the working directory in the container.
 WORKDIR /app
 

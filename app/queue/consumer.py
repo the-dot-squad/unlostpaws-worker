@@ -149,6 +149,63 @@ async def handle_job(redis_client: aioredis.Redis, job: dict) -> None:
         raise
 
 
+async def reclaim_pending_messages(redis_client: aioredis.Redis) -> None:
+    """
+    Scans the Pending Entries List (PEL) for messages that have been delivered
+    but never acknowledged (e.g. due to worker container crash/SIGKILL).
+    Reclaims and processes them to guarantee no lost jobs.
+    """
+    logger.info("Checking for unacknowledged pending messages on startup...")
+    # Consider messages pending for more than 5 minutes (300,000 ms) as timed out / crashed
+    min_idle_time = 300000
+    start_id = "0-0"
+
+    while True:
+        try:
+            # xautoclaim atomically reassigns ownership of timed-out pending messages to our consumer name.
+            # Returns (next_start_id, [(message_id, {field: value})])
+            res = await redis_client.xautoclaim(
+                name=settings.stream_key,
+                groupname=settings.consumer_group,
+                consumername=settings.consumer_name,
+                min_idle_time=min_idle_time,
+                start_id=start_id,
+                count=10,
+            )
+            next_start_id, claimed_messages = res[:2]
+
+            if not claimed_messages:
+                break
+
+            logger.info(
+                "Claimed %d pending messages that timed out", len(claimed_messages)
+            )
+            for message_id, fields in claimed_messages:
+                raw = fields.get("payload", "{}")
+                job = json.loads(raw)
+                try:
+                    await handle_job(redis_client, job)
+                    await redis_client.xack(
+                        settings.stream_key,
+                        settings.consumer_group,
+                        message_id,
+                    )
+                except Exception:
+                    # Acknowledge the message even on failure to avoid stuck loops (retry handles requeueing)
+                    await redis_client.xack(
+                        settings.stream_key,
+                        settings.consumer_group,
+                        message_id,
+                    )
+
+            start_id = next_start_id
+            if start_id == "0-0":
+                break
+        except Exception as exc:
+            logger.error("Failed to auto-claim pending messages: %s", exc)
+            break
+
+
 async def run_consumer(redis_client: aioredis.Redis) -> None:
     """
     Main asynchronous loop. Registers the consumer, polls for new messages,
@@ -161,6 +218,10 @@ async def run_consumer(redis_client: aioredis.Redis) -> None:
         settings.consumer_group,
     )
 
+    # Reclaim unacknowledged messages from crashed workers on startup
+    await reclaim_pending_messages(redis_client)
+
+    backoff_delay = 1
     while True:
         try:
             # Poll new messages from Redis Streams.
@@ -177,6 +238,9 @@ async def run_consumer(redis_client: aioredis.Redis) -> None:
             )
             # Update the container heartbeat timestamp
             update_heartbeat()
+
+            # If we successfully communicated with Redis, reset backoff delay
+            backoff_delay = 1
 
             if not messages:
                 continue
@@ -208,5 +272,6 @@ async def run_consumer(redis_client: aioredis.Redis) -> None:
             logger.info("Queue consumer stopped")
             raise
         except Exception:
-            logger.exception("Consumer loop error — retrying in 1s")
-            await asyncio.sleep(1)
+            logger.exception("Consumer loop error — retrying in %ds", backoff_delay)
+            await asyncio.sleep(backoff_delay)
+            backoff_delay = min(backoff_delay * 2, 30)

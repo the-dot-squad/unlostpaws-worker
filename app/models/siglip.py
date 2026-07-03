@@ -162,71 +162,77 @@ class SiglipEmbedder:
         - The final score is a weighted mean of the margin sigmoid and the pet softmax confidence.
         """
         self.load()
-        assert self._model is not None and self._tokenizer is not None
+        assert (
+            self._model is not None
+            and self._tokenizer is not None
+            and self._image_processor is not None
+        )
 
         pet_keys = list(PET_PROMPTS.keys())
         pet_prompts = list(PET_PROMPTS.values())
         all_prompts = pet_prompts + NEGATIVE_PROMPTS
         n_pet = len(pet_prompts)
 
+        # 1. Tokenize positive and negative prompts only ONCE outside the loop
+        text_inputs = self._tokenizer(
+            all_prompts, return_tensors="pt", padding=True, truncation=True
+        )
+        text_inputs = {k: v.to(self.device) for k, v in text_inputs.items()}
+
         results: list[RelevancePrediction] = []
-        for image in images:
-            # 1. Preprocess the single image
-            image_inputs = self._image_processor(images=[image], return_tensors="pt")
 
-            # 2. Tokenize positive and negative prompts
-            text_inputs = self._tokenizer(
-                all_prompts, return_tensors="pt", padding=True, truncation=True
-            )
+        # 2. Process images in chunks of configured batch_size
+        for start in range(0, len(images), self.batch_size):
+            chunk = images[start : start + self.batch_size]
+            image_inputs = self._image_processor(images=chunk, return_tensors="pt")
+            image_inputs = {k: v.to(self.device) for k, v in image_inputs.items()}
 
-            # Merge image and text features into a single batch payload
-            batch = {
-                k: v.to(self.device) for k, v in {**image_inputs, **text_inputs}.items()
-            }
+            # Merge image and text parameters for the model
+            batch = {**image_inputs, **text_inputs}
 
             with torch.no_grad():
-                # Get raw logits (scale and bias applied similarities) for the image against text prompts
-                logits = self._model(**batch).logits_per_image[0]
+                # AutoModelForZeroShotImageClassification evaluates zero-shot similarities
+                # Shape: (chunk_size, num_prompts)
+                logits_per_image = self._model(**batch).logits_per_image
 
-            # 3. Separate pet (positive) logits and distractor (negative) logits
-            pet_logits = logits[:n_pet]
-            neg_logits = logits[n_pet:]
+            for idx in range(len(chunk)):
+                logits = logits_per_image[idx]
 
-            # Find the best pet match index and score
-            best_pet_idx = int(pet_logits.argmax().item())
-            pet_max = pet_logits.max()
-            neg_max = neg_logits.max()
+                # 3. Separate pet (positive) logits and distractor (negative) logits
+                pet_logits = logits[:n_pet]
+                neg_logits = logits[n_pet:]
 
-            # If user provided a specific target pet class (e.g. dog), compare against that type
-            compare_logit = pet_max
-            if pet_type and pet_type in PET_PROMPTS:
-                typed_idx = pet_keys.index(pet_type)
-                # Take the max logit between the best general pet and the specific requested pet type
-                compare_logit = torch.max(pet_max, pet_logits[typed_idx])
+                # Find the best pet match index and score
+                best_pet_idx = int(pet_logits.argmax().item())
+                pet_max = pet_logits.max()
+                neg_max = neg_logits.max()
 
-            # 4. Math Logic: Compute Sigmoid margin and Softmax pet distribution
-            # margin_score maps the distance (compare_logit - neg_max) via a sigmoid function.
-            # Large positive margin -> score near 1.0. Large negative margin -> score near 0.0.
-            margin_score = torch.sigmoid(compare_logit - neg_max)
+                # If user provided a specific target pet class (e.g. dog), compare against that type
+                compare_logit = pet_max
+                if pet_type and pet_type in PET_PROMPTS:
+                    typed_idx = pet_keys.index(pet_type)
+                    # Take the max logit between the best general pet and the specific requested pet type
+                    compare_logit = torch.max(pet_max, pet_logits[typed_idx])
 
-            # pet_confidence computes softmax probabilities restricted to pet labels only
-            pet_confidence = torch.softmax(pet_logits, dim=0).max()
+                # 4. Math Logic: Compute Sigmoid margin and Softmax pet distribution
+                margin_score = torch.sigmoid(compare_logit - neg_max)
+                pet_confidence = torch.softmax(pet_logits, dim=0).max()
 
-            # Combine margin confidence and label classification confidence (50% weight each)
-            likelihood = float((0.5 * margin_score + 0.5 * pet_confidence).item())
+                # Combine margin confidence and label classification confidence (50% weight each)
+                likelihood = float((0.5 * margin_score + 0.5 * pet_confidence).item())
 
-            # 5. Determine the resulting top pet label
-            top_label = pet_keys[best_pet_idx]
-            if pet_type and pet_type in PET_PROMPTS:
-                typed_idx = pet_keys.index(pet_type)
-                # If specific pet type has a comparable logit value, prefer it to prevent false overrides
-                if pet_logits[typed_idx] >= pet_logits[best_pet_idx]:
-                    top_label = pet_type
+                # 5. Determine the resulting top pet label
+                top_label = pet_keys[best_pet_idx]
+                if pet_type and pet_type in PET_PROMPTS:
+                    typed_idx = pet_keys.index(pet_type)
+                    # If specific pet type has a comparable logit value, prefer it to prevent false overrides
+                    if pet_logits[typed_idx] >= pet_logits[best_pet_idx]:
+                        top_label = pet_type
 
-            results.append(
-                RelevancePrediction(
-                    pet_likelihood=round(likelihood, 4),
-                    top_label=top_label,
+                results.append(
+                    RelevancePrediction(
+                        pet_likelihood=round(likelihood, 4),
+                        top_label=top_label,
+                    )
                 )
-            )
         return results
