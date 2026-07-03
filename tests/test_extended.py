@@ -22,6 +22,7 @@ from app.queue.consumer import (
     send_to_dlq,
     update_heartbeat,
     handle_job,
+    reclaim_pending_messages,
 )
 from app.models.registry import resolve_torch_device, health_models, warmup
 from app.healthcheck import main as healthcheck_main
@@ -217,7 +218,7 @@ async def test_download_all_mixed_results():
 async def test_send_callback_success():
     payload = CallbackPayload(
         jobType="listing",
-        workerVersion="0.1.2",
+        workerVersion="0.1.3",
         matchModel="test",
         safetyModel="test",
         embeddingModel="test",
@@ -387,6 +388,36 @@ async def test_send_to_dlq():
     mock_redis.xadd.assert_called_once()
     called_args = mock_redis.xadd.call_args[0]
     assert called_args[1]["error"] == "Network timeout"
+
+
+@pytest.mark.asyncio
+async def test_reclaim_pending_messages():
+    mock_redis = MagicMock()
+
+    # Mock xautoclaim response: (next_start_id, [(message_id, {fields})])
+    # First call returns a claimed message, second call returns no messages to break loop
+    claimed_payload = json.dumps(
+        {"jobType": "listing", "webhookUrl": "http://test.com", "imageUrls": ["x"]}
+    )
+    mock_redis.xautoclaim = AsyncMock(
+        side_effect=[
+            ("0-0", [("msg_123", {"payload": claimed_payload})]),
+            ("0-0", []),
+        ]
+    )
+    mock_redis.xack = AsyncMock()
+
+    with patch("app.queue.consumer.handle_job", AsyncMock()) as mock_handle:
+        await reclaim_pending_messages(mock_redis)
+        mock_handle.assert_called_once_with(
+            mock_redis,
+            {"jobType": "listing", "webhookUrl": "http://test.com", "imageUrls": ["x"]},
+        )
+        mock_redis.xack.assert_called_once_with(
+            "unlostpaws:stream:vision-processing",
+            "vision-worker",
+            "msg_123",
+        )
 
 
 def test_update_heartbeat():

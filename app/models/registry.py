@@ -9,6 +9,7 @@ the main asyncio event loop during start-up or lazy execution.
 
 import asyncio
 import logging
+import os
 from concurrent.futures import ThreadPoolExecutor
 
 import torch
@@ -21,7 +22,8 @@ logger = logging.getLogger(__name__)
 
 # Dedicated thread pool executor for running CPU-bound model parameters loading
 # and heavy PyTorch inference calculations without blocking the async event loop.
-_executor = ThreadPoolExecutor(max_workers=2)
+# Scaled dynamically based on available CPU cores.
+_executor = ThreadPoolExecutor(max_workers=max(2, os.cpu_count() or 2))
 
 # Singleton registry storage slots
 _match_embedder: SiglipEmbedder | None = None

@@ -15,6 +15,7 @@ import sys
 from app.config.settings import settings
 from app.models.registry import warmup
 from app.queue.consumer import create_redis_client, run_consumer
+from app.pipeline.download import close_http_client
 
 # Configure structured system logging format and level
 logging.basicConfig(
@@ -126,6 +127,10 @@ async def main():
         # Safely close the Redis client connection pool.
         logger.info("Closing Redis client connection...")
         await redis_client.aclose()
+
+        # Safely close the global HTTP client connection pool.
+        await close_http_client()
+
         logger.info("Worker stopped successfully.")
 
 
