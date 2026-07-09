@@ -1,0 +1,32 @@
+{
+  "google/siglip2-base-patch16-224": {
+    "onnx_repo": "onnx-community/siglip2-base-patch16-224-ONNX",
+    "files": {
+      "fp32": "onnx/model.onnx",
+      "fp16": "onnx/model.onnx",
+      "int8": "onnx/model_quantized.onnx"
+    },
+    "export_task": "zero-shot-image-classification",
+    "export_on_miss": true
+  },
+  "Falconsai/nsfw_image_detection": {
+    "onnx_repo": null,
+    "files": {
+      "fp32": "model.onnx",
+      "fp16": "model.onnx",
+      "int8": "model_quantized.onnx"
+    },
+    "export_task": "image-classification",
+    "export_on_miss": true
+  },
+  "strangerguardhf/nsfw-image-detection": {
+    "onnx_repo": null,
+    "files": {
+      "fp32": "model.onnx",
+      "fp16": "model.onnx",
+      "int8": "model_quantized.onnx"
+    },
+    "export_task": "image-classification",
+    "export_on_miss": true
+  }
+}

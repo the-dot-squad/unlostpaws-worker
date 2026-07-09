@@ -1,3 +1,42 @@
+[project]
+name = "unlostpaws-worker"
+version = "0.2.0"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx==0.28.1",
+    "redis==5.2.1",
+    "Pillow==11.1.0",
+    "imagehash==4.3.1",
+    "numpy==2.2.2",
+    "pydantic==2.10.6",
+    "onnxruntime>=1.21.0,<1.27",
+    "optimum[onnxruntime]>=1.24.0,<2",
+    "huggingface-hub>=0.29.0",
+    "onnx>=1.17.0",
+    "torch==2.6.0",
+    "transformers==4.48.1",
+    "sentencepiece==0.2.0",
+    "protobuf==5.29.3",
+]
+
+[project.optional-dependencies]
+gpu = [
+    "onnxruntime-gpu>=1.21.0,<1.27",
+]
+dev = [
+    "pytest==8.3.4",
+    "pytest-asyncio==0.25.3",
+    "ruff==0.9.4",
+]
+
+[project.scripts]
+unlostpaws-tools = "tools.cli:main"
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+pythonpath = ["."]
+markers = [
+    "integration: loads real ML models (slow; excluded from default CI)",
+]
+addopts = "-m 'not integration'"

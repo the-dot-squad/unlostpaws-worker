@@ -12,12 +12,16 @@ import logging
 import signal
 import sys
 
+from app.config.runtime_validation import (
+    RuntimeValidationError,
+    detect_hardware,
+    validate_runtime,
+)
 from app.config.settings import settings
 from app.models.registry import warmup
 from app.queue.consumer import create_redis_client, run_consumer
 from app.pipeline.download import close_http_client
 
-# Configure structured system logging format and level
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -61,14 +65,27 @@ async def main():
     # Pre-loads the ML weights (NSFW, SigLIP2) into memory (and GPU if enabled)
     # during start-up to avoid latency spike on the first incoming job.
     if settings.embed_enabled or settings.safety_enabled:
+        hardware = detect_hardware()
+        try:
+            validate_runtime(settings, hardware, phase="preflight")
+        except RuntimeValidationError as exc:
+            logger.error("Runtime preflight failed:\n%s", exc)
+            sys.exit(1)
+
         try:
             await warmup()
-        except Exception:
-            # Log warmup issues, but allow execution to continue.
-            # The models will lazy-load on-demand when the first job arrives.
-            logger.exception(
-                "Model warmup failed — loading models on demand during first job"
-            )
+        except RuntimeValidationError as exc:
+            logger.error("Runtime validation failed during warmup:\n%s", exc)
+            sys.exit(1)
+        except Exception as exc:
+            logger.exception("Model warmup failed: %s", exc)
+            sys.exit(1)
+
+        try:
+            validate_runtime(settings, hardware, phase="post_warmup")
+        except RuntimeValidationError as exc:
+            logger.error("Runtime post-warmup validation failed:\n%s", exc)
+            sys.exit(1)
 
     # Verify that the broker URL is configured before spinning up the consumer loop.
     if not settings.redis_url:

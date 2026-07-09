@@ -17,6 +17,7 @@ import redis.asyncio as aioredis
 from app.callback.client import send_callback, send_failure_callback
 from app.config.settings import settings
 from app.pipeline.orchestrator import build_callback_payload, run_pipeline
+from app.schemas.job import parse_job
 
 logger = logging.getLogger(__name__)
 
@@ -81,9 +82,8 @@ def update_heartbeat() -> None:
     try:
         with open("/tmp/worker-heartbeat", "w") as f:
             f.write(str(time.time()))
-    except Exception:
-        # Ignore filesystem errors during heartbeat write (e.g. read-only volume mounts)
-        pass
+    except OSError as exc:
+        logger.debug("Heartbeat write failed: %s", exc)
 
 
 async def handle_job(redis_client: aioredis.Redis, job: dict) -> None:
@@ -91,26 +91,27 @@ async def handle_job(redis_client: aioredis.Redis, job: dict) -> None:
     Orchestrates the processing of a single job.
     Executes the pipeline, maps payloads, fires callbacks, and manages retries/DLQ on failure.
     """
-    job_type = job.get("jobType", "listing")
-    listing_id = job.get("listingId", "")
-    attempt = int(job.get("attempt", 0))
-    webhook_url = job.get("webhookUrl")
+    payload = parse_job(job)
+    job_data = payload.model_dump(mode="python")
+
+    job_type = payload.jobType
+    listing_id = payload.listingId or ""
+    attempt = payload.attempt
+    webhook_url = payload.webhookUrl
 
     logger.info(
         "Processing job type=%s listing=%s attempt=%d (%d images)",
         job_type,
         listing_id,
         attempt,
-        len(job.get("imageUrls", [])),
+        len(payload.imageUrls),
     )
 
-    # All jobs must provide a webhook URL so results can be returned to Next.js.
     if not webhook_url:
         raise ValueError("Job payload is missing webhookUrl")
 
     try:
-        # 1. Dispatch image URLs to the multi-stage vision pipeline
-        result = await run_pipeline(job)
+        result = await run_pipeline(job_data)
 
         # 2. Structure results into the Callback payload format
         payload = build_callback_payload(result)
@@ -137,15 +138,17 @@ async def handle_job(redis_client: aioredis.Redis, job: dict) -> None:
             delay = min(2**next_attempt, 30)
             logger.info("Requeueing job in %ds (attempt %d)", delay, next_attempt)
             await asyncio.sleep(delay)
-            await requeue_job(redis_client, job, next_attempt)
+            await requeue_job(redis_client, job_data, next_attempt)
         else:
             # Persistent failures are moved to the DLQ stream and reported via failure webhook
             logger.error("Moving job to DLQ after %d attempts", next_attempt)
-            await send_to_dlq(redis_client, job, str(exc))
+            await send_to_dlq(redis_client, job_data, str(exc))
             try:
-                await send_failure_callback(webhook_url, job, str(exc))
-            except Exception:
-                logger.exception("Failure callback failed for job type=%s", job_type)
+                await send_failure_callback(webhook_url, job_data, str(exc))
+            except Exception as exc:
+                logger.exception(
+                    "Failure callback failed for job type=%s: %s", job_type, exc
+                )
         raise
 
 
@@ -236,7 +239,6 @@ async def run_consumer(redis_client: aioredis.Redis) -> None:
                 count=1,
                 block=5000,
             )
-            # Update the container heartbeat timestamp
             update_heartbeat()
 
             # If we successfully communicated with Redis, reset backoff delay
@@ -245,7 +247,6 @@ async def run_consumer(redis_client: aioredis.Redis) -> None:
             if not messages:
                 continue
 
-            # Process returned entries
             for _stream, entries in messages:
                 for message_id, fields in entries:
                     raw = fields.get("payload", "{}")

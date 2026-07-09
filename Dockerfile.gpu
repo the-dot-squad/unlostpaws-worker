@@ -1,0 +1,50 @@
+# ==============================================================================
+# UnLostPaws Vision Worker — NVIDIA GPU production image
+# ==============================================================================
+# CUDA 12.4 runtime + PyTorch (CUDA) + ONNX Runtime GPU + Transformers.
+#
+# Default VISION_PROFILE=gpu-standard (torch + CUDA, torch.compile enabled).
+# Use with: docker compose -f docker-compose.gpu.yml up -d
+#
+# Requires NVIDIA Container Toolkit on the host. Do not use this image on CPU-only VMs.
+# ==============================================================================
+
+FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.12 \
+    python3.12-venv \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY requirements.txt requirements-gpu.txt ./
+
+RUN python3.12 -m pip install --no-cache-dir --upgrade pip \
+    && python3.12 -m pip install --no-cache-dir -r requirements-gpu.txt
+
+COPY app/ ./app/
+COPY tools/ ./tools/
+
+RUN useradd --create-home --uid 1001 appuser \
+    && mkdir -p /app/.cache/huggingface /app/.cache/tensorrt \
+    && chown -R appuser:appuser /app
+
+USER appuser
+
+ENV HF_HOME=/app/.cache/huggingface
+ENV MODEL_CACHE_DIR=/app/.cache/huggingface/onnx
+ENV TENSORRT_CACHE_DIR=/app/.cache/tensorrt
+ENV VISION_PROFILE=gpu-standard
+ENV WORKER_IMAGE_VARIANT=gpu
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+ENV RUNNING_IN_DOCKER=true
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=180s --retries=3 \
+    CMD python3.12 app/healthcheck.py
+
+CMD ["python3.12", "app/main.py"]

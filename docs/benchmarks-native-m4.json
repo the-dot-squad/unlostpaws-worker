@@ -1,0 +1,102 @@
+{
+  "benchmarks": [
+    {
+      "profile": "cpu-quality",
+      "runtime": "torch",
+      "execution_provider": "auto",
+      "precision": "fp32",
+      "images": 1,
+      "runs": 5,
+      "stages": {
+        "safety": {
+          "p50_ms": 30.3,
+          "p95_ms": 30.5
+        },
+        "embed": {
+          "p50_ms": 33.5,
+          "p95_ms": 33.6
+        },
+        "relevance": {
+          "p50_ms": 32.8,
+          "p95_ms": 33.0
+        }
+      }
+    },
+    {
+      "profile": "cpu-light",
+      "runtime": "torch",
+      "execution_provider": "auto",
+      "precision": "fp32",
+      "images": 1,
+      "runs": 5,
+      "stages": {
+        "safety": {
+          "p50_ms": 31.8,
+          "p95_ms": 36.5
+        }
+      }
+    },
+    {
+      "profile": "cpu-standard",
+      "runtime": "torch",
+      "execution_provider": "auto",
+      "precision": "fp32",
+      "images": 1,
+      "runs": 5,
+      "stages": {
+        "safety": {
+          "p50_ms": 31.6,
+          "p95_ms": 36.3
+        },
+        "embed": {
+          "p50_ms": 34.6,
+          "p95_ms": 35.5
+        }
+      }
+    },
+    {
+      "profile": "onnx-cpu-quality",
+      "runtime": "onnx",
+      "execution_provider": "cpu",
+      "precision": "int8",
+      "images": 1,
+      "runs": 5,
+      "stages": {
+        "safety": {
+          "p50_ms": 35.5,
+          "p95_ms": 36.8
+        },
+        "embed": {
+          "p50_ms": 28.0,
+          "p95_ms": 28.1
+        },
+        "relevance": {
+          "p50_ms": 23.7,
+          "p95_ms": 23.8
+        }
+      }
+    },
+    {
+      "profile": "onnx-apple",
+      "runtime": "onnx",
+      "execution_provider": "coreml",
+      "precision": "fp16",
+      "images": 1,
+      "runs": 5,
+      "stages": {
+        "safety": {
+          "p50_ms": 87.1,
+          "p95_ms": 102.7
+        },
+        "embed": {
+          "p50_ms": 98.3,
+          "p95_ms": 100.8
+        },
+        "relevance": {
+          "p50_ms": 98.6,
+          "p95_ms": 100.3
+        }
+      }
+    }
+  ]
+}

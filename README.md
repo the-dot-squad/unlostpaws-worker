@@ -1,271 +1,254 @@
 # UnLostPaws Vision Worker
 
-[![Python Version](https://img.shields.io/badge/python-3.12%20%7C%203.13-blue.svg)](https://www.python.org/)
+[![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
-[![CI/CD Pipeline](https://github.com/the-dot-squad/unlostpaws-worker/actions/workflows/ci.yml/badge.svg)](https://github.com/the-dot-squad/unlostpaws-worker/actions/workflows/ci.yml)
-[![Docker Support](https://img.shields.io/badge/docker-ready-blue.svg?logo=docker)](https://www.docker.com/)
-[![PyTorch](https://img.shields.io/badge/PyTorch-EE4C2C?style=flat&logo=pytorch&logoColor=white)](https://pytorch.org/)
-[![Hugging Face](https://img.shields.io/badge/%F0%9F%A4%97-Hugging%20Face-yellow)](https://huggingface.co/)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/the-dot-squad/unlostpaws-worker/pulls)
+[![CI](https://github.com/the-dot-squad/unlostpaws-worker/actions/workflows/ci.yml/badge.svg)](https://github.com/the-dot-squad/unlostpaws-worker/actions/workflows/ci.yml)
 
-A modular, multi-stage background image intelligence worker built with **Python**, **PyTorch**, and **Hugging Face Transformers**. It runs as a lightweight, independent backend service that consumes resource-intensive machine learning jobs asynchronously from **Redis Streams** and posts results back via HTTP webhook callbacks.
+Background Async ML worker for **[UnLostPaws](https://github.com/the-dot-squad/unlostpaws)** — an open-source lost-and-found pet platform. This repo is **not** the website. It is the Python service that runs heavy vision inference off the request path, and POST results back via webhook.
+
+When a user uploads pet photos on the site, the Next.js app enqueues a job on a **Redis Stream** (`unlostpaws:stream:vision-processing`). This worker pulls jobs with consumer groups, runs quality/safety/fingerprint/embed/relevance stages, and callbacks to `/api/webhooks/vision` so the app can approve listings, deduplicate abuse, and index SigLIP2 vectors in Qdrant.
 
 ---
 
-## Architecture Overview
+## Architecture
 
-The communication between the Next.js frontend application and the Python ML worker is completely decoupled using **Redis Streams**, allowing for efficient queue management, horizontal scaling, and load-leveling.
+### Platform context
 
+```mermaid
+flowchart TB
+    subgraph Web["unlostpaws (Next.js)"]
+        UI[Browser / API]
+        Enqueue[enqueueImageJob]
+        Webhook["/api/webhooks/vision"]
+        Mongo[(MongoDB)]
+        Qdrant[(Qdrant)]
+    end
+
+    subgraph Infra["Shared infrastructure"]
+        Redis[(Redis Streams)]
+        S3[(S3 / R2)]
+    end
+
+    subgraph Worker["unlostpaws-worker (this repo)"]
+        Consumer[Redis consumer]
+        Pipeline[Vision pipeline]
+        Callback[Webhook client]
+    end
+
+    UI --> Enqueue
+    Enqueue -->|XADD payload| Redis
+    Redis -->|XREADGROUP| Consumer
+    Consumer --> Pipeline
+    Pipeline -->|HTTPS GET| S3
+    Pipeline --> Callback
+    Callback -->|POST results| Webhook
+    Webhook --> Mongo
+    Webhook --> Qdrant
 ```
-┌─────────────────────────────────┐
-│        Next.js Frontend         │◄───────────────────────────────────────────────┐
-│      (App Router, Vercel)       │                                                │
-└────────────────┬────────────────┘                                                │
-                 │                                                                 │
-                 │ 1. Enqueue Job (XADD)                                           │ 4. Webhook Callback
-                 ▼                                                                 │    (HTTP POST)
-┌─────────────────────────────────┐                                                │
-│          Redis Streams          │                                                │
-│ (unlostpaws:stream:processing)  │                                                │
-└────────────────┬────────────────┘                                                │
-                 │                                                                 │
-                 │ 2. Fetch Job (XREADGROUP)                                       │
-                 ▼                                                                 │
-┌─────────────────────────────────┐                                                │
-│      Python Vision Worker       │                                                │
-└────────────────┬────────────────┘                                                │
-                 │                                                                 │
-                 │ 3. Execute Pipeline Stages                                      │
-                 ▼                                                                 │
-┌────────────────────────────────────────────────────────────────────────┐         │
-│  ┌───────────────────────┐  ┌───────────────────────┐  ┌─────────────┐ │         │
-│  │   Moderation/Safety   │  │   Image Fingerprint   │  │  Embedding  │ │─────────┘
-│  │   - Resolution        │  │   - MD5 Checksum      │  │  - SigLIP2  │ │
-│  │   - Laplacian Blur    │  │   - Perceptual Hash   │  │  - Relevance│ │
-│  │   - NSFW Detection    │  │     (pHash)           │  │             │ │
-│  └───────────────────────┘  └───────────────────────┘  └─────────────┘ │
-└────────────────────────────────────────────────────────────────────────┘
+
+### Worker internals
+
+```mermaid
+flowchart TD
+    start[app/main.py] --> preflight[Runtime preflight]
+    preflight -->|fail| exit1[Exit 1 — no silent fallback]
+    preflight --> warmup[Model warmup]
+    warmup --> consumer[queue/consumer.py loop]
+
+    consumer --> parse[schemas/job.py validate]
+    parse --> orch[pipeline/orchestrator.py]
+    orch --> dl[pipeline/download.py]
+    dl --> stages{Profile stages}
+
+    stages --> quality[quality — blur + resolution]
+    stages --> safety[safety — NSFW model]
+    stages --> fp[fingerprint — MD5 + pHash]
+    stages --> embed[embed — SigLIP2 768-dim]
+    stages --> rel[relevance — pet likelihood]
+
+    quality --> result[schemas/result.py]
+    safety --> result
+    fp --> result
+    embed --> result
+    rel --> result
+
+    result --> cb[callback/client.py]
+    cb -->|success| ack[XACK message]
+    cb -->|retryable error| requeue[Requeue + backoff]
+    requeue --> consumer
+    cb -->|max attempts| dlq[DLQ stream + failure webhook]
 ```
 
-### Data Flow Lifecycle
-
-1. **Job Enqueueing:** Next.js uploads pet images to cloud storage (e.g., Cloudflare R2 or AWS S3), persists the initial database entry in MongoDB, and pushes a processing job payload containing the image URLs, metadata, and a webhook callback URL to the Redis stream using `XADD`.
-2. **Job Acquisition:** The Python worker polls the Redis stream via `XREADGROUP`. Once a job is obtained, the worker updates its local heartbeat file (`/tmp/worker-heartbeat`) to signal health and proceeds to process the payload.
-3. **Image Acquisition & Decoding:** The worker downloads the specified images concurrently using `httpx` with a configurable semaphore limit to avoid overloading network gateways. Images are decoded into standard RGB PIL arrays.
-4. **Pipeline Processing:** Images proceed sequentially through the enabled execution stages (quality checks, safety filtering, cryptographic/perceptual fingerprinting, vector embedding, and zero-shot relevance classification).
-5. **Success Callback:** The worker serializes the processed results (safety flags, quality status, MD5s, pHashes, and SigLIP2 vector embeddings) and issues an HTTP POST back to the Next.js frontend using the provided `webhookUrl`. Next.js stores the results in MongoDB and indices the vectors in Qdrant.
-6. **Failure/DLQ Recovery:** If a job fails (e.g., due to persistent download failures or model crashes) and exceeds the retry threshold, it is automatically forwarded to a Dead Letter Queue (`DLQ`) Redis Stream. The worker then fires a failure webhook callback to Next.js so the system can gracefully flag the issue.
-
 ---
 
-## Pipeline Stages
+## Quick start
 
-Each processed image goes through the following pipeline stages:
-
-| Stage | Mechanism / Model | Description |
-| :--- | :--- | :--- |
-| **`quality`** | NumPy Laplacian | Computes image resolution and blur score. Low variance of Laplacian indicates a blurry image. |
-| **`safety`** | `Falconsai/nsfw_image_detection` | Classifies whether content is safe or contains adult material. |
-| **`fingerprint`**| MD5 + Perceptual Hashing (pHash) | Generates a cryptographic MD5 (for exact duplicates) and a perceptual hash (for resized/reformatted near-duplicates). |
-| **`embed`** | `google/siglip2-base-patch16-224` | Generates a 768-dimensional vector embedding optimized for visual similarity and search. |
-| **`relevance`** | SigLIP2 Zero-Shot | Compares the image embedding against pet-specific classification prompts to verify that the uploaded image contains an actual animal matching the requested pet type. |
-
----
-
-## Sizing & Execution Profiles
-
-Choose the active profile based on your host server's CPU or GPU resources using the `VISION_PROFILE` environment variable. This configuration optimizes memory usage and prevents Out-Of-Memory (OOM) crashes:
-
-| Profile Name | Device | Min RAM | Min VRAM | Description |
-| :--- | :---: | :---: | :---: | :--- |
-| **`dedup-only`** | CPU | 512 MB | 0 MB | Quality + fingerprinting checks only (No PyTorch/Transformers loaded). |
-| **`cpu-light`** | CPU | 1.5 GB | 0 MB | NSFW safety only (No animal matching embeddings). |
-| **`cpu-standard`** | CPU | 3.0 GB | 0 MB | Uses `SigLIP2` embeddings + NSFW safety (omits animal verification). |
-| **`cpu-quality`** | CPU | 4.0 GB | 0 MB | Uses `SigLIP2` matching + NSFW safety (**Default Development Profile**). |
-| **`gpu-standard`** | GPU | 4.0 GB | 4.0 GB | Uses `SigLIP2` + NSFW safety on GPU (**Default Production Profile**). |
-| **`gpu-quality`** | GPU | 4.0 GB | 6.0 GB | Uses `SigLIP2` + multi-class `strangerguardhf` NSFW on GPU. |
-
----
-
-## Configuration & Environment Variables
-
-Create a `.env` file at the root of the project. The following settings are supported:
-
-| Variable | Required | Default | Description |
-| :--- | :---: | :--- | :--- |
-| `REDIS_URL` | Yes | *None* | Shared Redis instance URI (e.g., `redis://default:pwd@host:6379`). Can also use `UPSTASH_REDIS_URL`. |
-| `STREAM_KEY` | No | `unlostpaws:stream:vision-processing` | Redis Stream key where the worker consumes job payloads. |
-| `DLQ_STREAM_KEY`| No | `unlostpaws:stream:vision-processing:dlq` | Redis Stream key where failed jobs are sent after maximum retries. |
-| `CONSUMER_GROUP`| No | `vision-worker` | The name of the Redis consumer group. |
-| `CONSUMER_NAME` | No | `worker-1` | The unique identifier of this specific worker instance. |
-| `MAX_JOB_ATTEMPTS` | No | `3` | Maximum processing attempts before a job is moved to the DLQ. |
-| `VISION_PROFILE`| No | `cpu-quality` | Sizing profile to load (see table above). |
-| `DEVICE` | No | `auto` | Force hardware execution device (`cpu` or `cuda`). |
-| `BATCH_SIZE` | No | *Profile default*| Number of images processed in parallel during GPU inference. |
-| `HF_HOME` | No | `/app/.cache/huggingface` | Hugging Face local cache directory for downloading models. |
-| `DOWNLOAD_TIMEOUT` | No | `30` | Timeout in seconds for downloading each image. |
-| `CALLBACK_TIMEOUT` | No | `60` | Timeout in seconds when calling the webhook callback URL. |
-| `MAX_CONCURRENT_DOWNLOADS` | No | `4` | Maximum number of concurrent HTTP image downloads. |
-
----
-
-## How to Run
-
-### 1. Run Pre-built Image from GHCR (Recommended for Deployment)
-Since the worker is published on the GitHub Container Registry (GHCR), you can pull and run the container directly without cloning the codebase or building it locally:
-
-> [!NOTE]
-> The published GHCR image is a multi-platform build supporting both **`linux/amd64` (x86_64)** and **`linux/arm64`** (e.g., Raspberry Pi 4, Apple Silicon/AWS Graviton).
-
-1. **Configure Environment:** Create a local `.env` file containing your configurations (e.g., `REDIS_URL`).
-2. **Execute Container:** Pull and launch the daemon (mounting a persistent volume for the model cache):
-   ```bash
-   docker run -d \
-     --name unlostpaws-worker \
-     --env-file .env \
-     -v unlostpaws-hf-cache:/app/.cache/huggingface \
-     ghcr.io/the-dot-squad/unlostpaws-worker:latest
-   ```
-
-### 2. Run Locally with Docker Compose (For Local Development)
-If you want to run the worker locally and build it from the source code:
-1. Create your local config:
-   ```bash
-   cp .env.example .env
-   # Edit your .env with local Redis URL (e.g. redis://host.docker.internal:6379)
-   ```
-2. Start the services:
-   ```bash
-   docker compose up --build
-   ```
-
-### 3. Locally on Bare Metal (No Docker)
-Ensure you have Python 3.12+ installed (we recommend using [uv](https://github.com/astral-sh/uv) for fast installs):
 ```bash
-cp .env.example .env
-# Install dependencies
-pip install -r requirements.txt
-# Run the worker process
-export PYTHONPATH=.
+cp .env.example .env          # set REDIS_URL (rediss:// for Upstash TLS)
+./tools/run doctor              # or: python -m tools doctor
+docker compose up -d
+```
+
+| I have… | `VISION_PROFILE` | How to run |
+| :--- | :--- | :--- |
+| Dev laptop / Linux CPU | `cpu-quality` | `docker compose up -d` |
+| ARM64 SBC / Graviton | `onnx-cpu-quality` | `docker compose up -d` |
+| NVIDIA GPU | `gpu-standard` | `docker compose -f docker-compose.gpu.yml up -d` |
+| Apple Silicon | `onnx-apple` | Native Python on macOS (not Docker) |
+| Dedup only | `dedup-only` | Any CPU path |
+
+**Docs:** [Guide](docs/GUIDE.md) · [Performance](docs/PERFORMANCE.md) · [ONNX export (maintainers)](docs/MODEL_EXPORT.md)
+
+---
+
+## Pipeline stages
+
+Configured by **`VISION_PROFILE`** — not individual env toggles.
+
+| Stage | Model / method |
+| :--- | :--- |
+| `quality` | Laplacian blur + resolution |
+| `safety` | `Falconsai/nsfw_image_detection` |
+| `fingerprint` | MD5 + pHash |
+| `embed` | `google/siglip2-base-patch16-224` (768-dim) |
+| `relevance` | SigLIP2 zero-shot pet check |
+
+---
+
+## Configuration
+
+One knob: **`VISION_PROFILE`**. See [docs/GUIDE.md](docs/GUIDE.md) for tiers, env vars, and troubleshooting.
+
+Required: `REDIS_URL`. GPU compose sets profile and device for you.
+
+---
+
+## Operator tools
+
+Python implements all logic (`python -m tools`). For servers and cron, use the single bash entry point **`./tools/run`** — it picks `.venv/bin/python` when present and forwards args to the Python CLI.
+
+```bash
+./tools/run doctor                              # hardware detect + profile recommendation
+./tools/run doctor --profile cpu-quality        # preflight only
+./tools/run doctor --smoke --profile cpu-quality
+./tools/run smoke --profile cpu-quality         # full pipeline test
+./tools/run benchmark --profile cpu-quality --runs 5
+./tools/run export --output output/onnx         # maintainers
+```
+
+Equivalent without bash:
+
+```bash
+python -m tools doctor
+python -m tools smoke --profile cpu-quality
+```
+
+Bare metal worker process (Python 3.12):
+
+```bash
+python3.12 -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]"
 python app/main.py
 ```
 
-### 4. Production VM Deployment (Self-Hosted GPU/CPU VM)
-Because the worker consumes and produces data asynchronously via Redis streams and callbacks, you do **not** need to expose any incoming ports on the container.
-
-You can deploy directly using the existing [docker-compose.yml](./docker-compose.yml) configuration in this repository:
-
-1. **Configure Environment:** Create a production `.env` file pointing to your shared cloud Redis instance (e.g. Upstash or AWS ElastiCache) and select your target `VISION_PROFILE`.
-2. **GPU Optimization (Optional):** If deploying on an NVIDIA GPU VM, ensure the host has the NVIDIA Container Toolkit installed, and uncomment the `deploy` block in [docker-compose.yml](./docker-compose.yml).
-3. **Start the Service:** Build and launch the container as a background daemon:
-   ```bash
-   docker compose up -d --build
-   ```
-
 ---
 
-## Redis Stream Integration Specification
+## Job contract
 
-### 1. Input Job Payload Format (Redis Stream entry)
-Add a job to the Redis Stream defined by `STREAM_KEY` using `XADD` with a single `payload` field containing a serialized JSON string:
+**Enqueue** (Redis `XADD`, field `payload`) — produced by [unlostpaws `enqueueImageJob`](https://github.com/the-dot-squad/unlostpaws):
 
 ```json
 {
   "jobType": "listing",
   "listingId": "listing_123",
-  "ownedPetId": "pet_123",            // Optional
-  "searchSessionId": "session_123",    // Optional
-  "imageUrls": [
-    "https://example.com/pet-image-1.jpg"
-  ],
-  "petType": "dog",                    // Used for relevance classification (e.g., cat, dog, rabbit)
-  "webhookUrl": "https://myapp.com/api/internal/ml-callback?secret=token",
-  "pipeline": ["quality", "safety", "fingerprint", "embed"] // Optional stage override
+  "imageUrls": ["https://example.com/pet.jpg"],
+  "petType": "dog",
+  "webhookUrl": "https://myapp.com/api/internal/ml-callback"
 }
 ```
 
-### 2. Success Callback Payload Format
-When the worker successfully completes processing, it sends an HTTP POST request to the specified `webhookUrl` with the following body:
+**Success callback** includes per-image `embedding`, `safety`, `relevance`, `quality`, `md5`, `phash`. **Failure** after max retries → DLQ + failure webhook.
 
-```json
-{
-  "jobType": "listing",
-  "workerVersion": "0.1.3",
-  "matchModel": "google/siglip2-base-patch16-224",
-  "safetyModel": "Falconsai/nsfw_image_detection",
-  "embeddingModel": "google/siglip2-base-patch16-224",
-  "listingId": "listing_123",
-  "ownedPetId": "pet_123",             // Echoed back if sent
-  "searchSessionId": "session_123",     // Echoed back if sent
-  "images": [
-    {
-      "url": "https://example.com/pet-image-1.jpg",
-      "s3Key": "https://example.com/pet-image-1.jpg",
-      "md5": "b10a8db164e0754105b7a99be72e3fe5",
-      "phash": "8f1a3e2d6b5c7a90",
-      "embedding": [0.0123, -0.456, 0.789], // Float array of size 768 (SigLIP2)
-      "safety": {
-        "nsfwScore": 0.002,
-        "label": "normal",
-        "model": "Falconsai/nsfw_image_detection"
-      },
-      "relevance": {
-        "petLikelihood": 0.985,
-        "topLabel": "dog"
-      },
-      "quality": {
-        "width": 1200,
-        "height": 900,
-        "blurScore": 45.2,
-        "ok": true
-      }
-    }
-  ],
-  "errors": []
-}
-```
-
-### 3. Failure Callback Payload Format
-If the job fails completely (e.g., timeout, invalid image formats, pipeline errors) and exceeds `MAX_JOB_ATTEMPTS`, it will be moved to the Dead Letter Queue (`DLQ_STREAM_KEY`), and a failure webhook is sent to notify the caller:
-
-```json
-{
-  "jobType": "listing",
-  "error": "Failed to download any images; connection timed out.",
-  "listingId": "listing_123",
-  "ownedPetId": "pet_123",
-  "searchSessionId": "session_123"
-}
-```
+Payload shapes are defined in `app/schemas/` and must stay compatible with the web app's webhook handler.
 
 ---
 
-## Contributing
+## Development
 
-We welcome contributions from the community to make the UnLostPaws Vision Worker better! To maintain a high level of code quality and consistency, please follow these guidelines:
+### Prerequisites
 
-1. **Fork the Repository:** Create a personal fork of the repository on GitHub.
-2. **Create a Branch:** Create a descriptive feature or bugfix branch:
-   ```bash
-   git checkout -b feature/your-amazing-feature
-   ```
-3. **Write and Comment Code:** Ensure your code is thoroughly documented. Use docstrings for all modules, classes, and methods, and add explanatory comments for complex logic.
-4. **Run Verification:** Compile your code using `py_compile` to ensure there are no syntax or indentation errors:
-   ```bash
-   python3 -m py_compile app/main.py app/healthcheck.py app/config/*.py app/models/*.py app/schemas/*.py app/queue/*.py app/callback/*.py app/pipeline/*.py app/pipeline/stages/*.py
-   ```
-5. **Commit and Push:** Write clean, descriptive commit messages, and push your changes to your fork.
-6. **Open a Pull Request:** Submit a PR back to the main repository. Provide a detailed summary of the changes and what has been verified.
+- **Python 3.12** (pinned in Docker; 3.13 works in CI; **3.14 is not supported** — torch/onnx wheels break)
+- Redis reachable at `REDIS_URL` for integration tests that touch the broker (optional for unit tests)
+- ~2 GB disk for Hugging Face model cache on first integration/smoke run
 
----
+### Local setup
+
+```bash
+git clone https://github.com/the-dot-squad/unlostpaws-worker.git
+cd unlostpaws-worker
+python3.12 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+cp .env.example .env    # edit REDIS_URL if testing against a real broker
+```
+
+Run the worker locally (needs Redis + valid profile):
+
+```bash
+python app/main.py
+```
+
+Run against the full UnLostPaws stack: clone [unlostpaws](https://github.com/the-dot-squad/unlostpaws), start its Redis/Mongo/Qdrant dependencies, then point both `.env` files at the same `REDIS_URL` and matching `WEBHOOK_SECRET`.
+
+### Testing
+
+```bash
+pytest                         # unit tests only (mocked ML) — same as CI
+pytest -m integration -v       # slow; downloads + loads real models
+pytest tests/unit/test_consumer.py -v   # single module
+```
+
+| Marker | What runs | When to use |
+| :--- | :--- | :--- |
+| default (`not integration`) | `tests/unit/` with mocked torch/onnx | Every PR; fast feedback |
+| `integration` | `tests/integration/` — real warmup + pipeline | Before release; after model/profile changes |
+
+Unit tests mock heavy deps in `tests/unit/conftest.py` so CI does not download SigLIP2 on every push.
+
+### Lint & quality
+
+```bash
+ruff check app tests tools
+ruff format app tests tools
+aislop scan                    # AI-slop / style gate (target: clean run)
+```
+
+CI runs ruff + default pytest on Python 3.12 and 3.13 on every PR and `main` push. Docker images (CPU + GPU) are built and published to GHCR only when you push a `v*` tag (e.g. `v0.1.4`).
+
+### Project conventions
+
+When changing this repo, keep these rules in mind:
+
+1. **Profile-first config** — stages, models, runtime, and precision come from `VISION_PROFILE` (`app/config/profiles.py`). Do not add per-stage env toggles; extend or adjust presets instead.
+2. **Fail fast** — wrong hardware for a profile must exit at startup (`app/config/runtime_validation.py`), never silently fall back (e.g. GPU profile on a CPU image).
+3. **Job boundary validation** — Redis payloads are parsed with `app/schemas/job.py` before the pipeline runs; keep schemas aligned with the Next.js enqueue + webhook handlers.
+4. **Moderation-first pipeline** — cheap checks (quality, safety) run before embeddings (`app/pipeline/orchestrator.py`).
+5. **Torch + ONNX parity** — new models need entries in `app/models/manifest.json`, factory wiring, and ONNX validation (`./tools/run export`, `./tools/run validate`).
+6. **Operator UX** — commands live in `tools/` (Python); use `./tools/run` on servers when you need a single shell entry point.
+7. **Docs** — deployment/profile detail belongs in `docs/GUIDE.md`; benchmarks in `docs/PERFORMANCE.md`; keep this README as overview + contributor entry.
+
+### Making changes
+
+| Change type | Touch |
+| :--- | :--- |
+| New / altered profile | `app/config/profiles.py`, `docs/GUIDE.md`, smoke/benchmark in CI or docs |
+| New pipeline stage | `app/pipeline/stages/`, orchestrator, profiles, schemas, unit tests |
+| New model backend | `app/models/`, `manifest.json`, factory, `tests/unit/test_factory.py` |
+| Webhook payload field | `app/schemas/result.py` + coordinated change in **unlostpaws** webhook route |
+| Docker / deploy | `Dockerfile`, `docker-compose*.yml`, `.env.example` |
+
+Pull requests should include unit tests for logic changes. Run `./tools/run smoke --profile cpu-quality` (or `pytest -m integration`) when touching inference or profiles.
 
 ## License
 
-This project is licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0)**. 
-
-### What this means:
-* **Strong Copyleft:** Anyone who modifies this code and runs it as a service over a network (e.g. hosting it as a SaaS backend worker) **must make their modified source code publicly available** under the same AGPL-3.0 license.
-* **No Closed-Source Commercial Forks:** You cannot integrate this software into proprietary closed-source applications or services without open-sourcing the modifications.
-* **Attribution:** Any usage, distribution, or execution of the software must retain the original copyright notice and license.
-
-If you wish to use this software in a closed-source commercial product or need custom terms, please contact the maintainers to discuss custom licensing agreements. For full license details, see the [LICENSE](./LICENSE) file in the root of the repository.
+This project is [AGPL-3.0](LICENSE). If you modify the worker and run it as a network service, you must make corresponding source available to users.

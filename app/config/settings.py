@@ -1,139 +1,131 @@
 """
-Environment configuration — loads VISION_PROFILE and shared worker secrets.
+Application settings loaded from environment variables.
 
-This module acts as the configuration hub for the worker application. It parses
-environment variables, maps them to type-safe settings, merges profile-specific
-presets, resolves execution devices (CPU vs. CUDA/GPU), and exposes a global
-singleton `settings` object.
+``VISION_PROFILE`` is the primary knob — it loads a :class:`VisionProfile` preset
+that already defines runtime, execution provider, precision, stages, and models.
+
+Optional overrides (maintainers only — profiles already set these):
+  INFERENCE_RUNTIME, ORT_EXECUTION_PROVIDER, MODEL_PRECISION, TORCH_COMPILE,
+  DEVICE, BATCH_SIZE
+
+See docs/GUIDE.md for when overrides are useful.
 """
+
+from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
-from app.config.profiles import VisionProfile, get_preset
+from app.config.profiles import PrecisionKind, RuntimeKind, VisionProfile, get_preset
+
+
+def _default_hf_home() -> str:
+    """Pick a writable Hugging Face cache directory for Docker vs local dev."""
+    explicit = os.getenv("HF_HOME", "").strip()
+    if explicit:
+        return explicit
+    if os.getenv("RUNNING_IN_DOCKER", "").lower() in ("1", "true", "yes"):
+        return "/app/.cache/huggingface"
+    if Path("/.dockerenv").exists():
+        return "/app/.cache/huggingface"
+    return str(Path.home() / ".cache" / "huggingface")
 
 
 @dataclass(frozen=True)
 class Settings:
-    """
-    Immutable application configuration container.
-    """
+    """Immutable application configuration container."""
 
-    # Version identifier derived from package metadata
     worker_version: str
-
-    # Connection URL for the shared Redis instance
     redis_url: str
-
-    # Stream queue where the worker consumes pet processing jobs
     stream_key: str
-
-    # Dead Letter Queue stream where failed jobs are sent
     dlq_stream_key: str
-
-    # Consumer group name registered for message tracking
     consumer_group: str
-
-    # Unique name identifying this worker instance
     consumer_name: str
-
-    # Maximum execution attempts before writing to the DLQ stream
     max_attempts: int
-
-    # Active execution preset profile loaded from profiles registry
     profile: VisionProfile
-
-    # Hugging Face model ID used for matching/embeddings (resolved or overridden)
     match_model: str | None
-
-    # Hugging Face model ID used for NSFW classification (resolved or overridden)
     safety_model: str | None
-
-    # Feature flag to enable/disable visual embedding vector stage
     embed_enabled: bool
-
-    # Feature flag to enable/disable NSFW safety detection stage
     safety_enabled: bool
-
-    # Feature flag to enable/disable zero-shot pet verification stage
     relevance_enabled: bool
-
-    # Target execution device ('cpu' or 'cuda')
     device: str
-
-    # Number of images processed concurrently during ML model inference
     batch_size: int
-
-    # HTTP timeout limit in seconds for downloading image assets
     download_timeout: float
-
-    # HTTP timeout limit in seconds when posting callbacks back to Next.js
     callback_timeout: float
-
-    # Filesystem path where Hugging Face downloads and caches model parameters
     hf_home: str
-
-    # Maximum number of concurrent HTTP image downloads
     max_concurrent_downloads: int
+    # Inference backend settings.
+    runtime: RuntimeKind
+    execution_provider: str
+    precision: PrecisionKind
+    torch_compile: bool
+    model_cache_dir: str
+    tensorrt_cache_dir: str
 
 
 def _resolve_device(profile: VisionProfile, override: str) -> str:
-    """
-    Determines whether to execute models on CPU or GPU.
-    If 'auto' is specified, it falls back to the preset profile's default device.
-    """
     if override == "auto":
         return profile.device
     return override
 
 
+def _parse_bool(value: str, default: bool) -> bool:
+    normalized = value.strip().lower()
+    if normalized in ("1", "true", "yes", "on"):
+        return True
+    if normalized in ("0", "false", "no", "off"):
+        return False
+    return default
+
+
 def load_settings() -> Settings:
-    """
-    Loads environment configurations, resolves overrides, and constructs
-    the global Settings instance.
-    """
     from app import __version__
 
-    # 1. Resolve Profile Name and fetch preset configurations
     profile_name = os.getenv("VISION_PROFILE", "cpu-quality")
     profile = get_preset(profile_name)
 
-    # 2. Extract model override parameters if specified in .env
     match_override = os.getenv("MATCH_MODEL", "").strip()
     safety_override = os.getenv("SAFETY_MODEL", "").strip()
     match_model = match_override or profile.match_model
     safety_model = safety_override or profile.safety_model
 
-    # 3. Parse features toggle flags
-    embed_enabled = os.getenv("EMBED_ENABLED", "true").lower() == "true"
-    safety_enabled = os.getenv("SAFETY_ENABLED", "true").lower() == "true"
-    relevance_enabled = os.getenv("RELEVANCE_ENABLED", "true").lower() == "true"
+    # Stage toggles come from the profile preset (single knob: VISION_PROFILE).
+    embed_enabled = profile.embed_enabled
+    safety_enabled = profile.safety_enabled
+    relevance_enabled = profile.relevance_enabled
 
-    # 4. Apply profile specific constraints (e.g. disable stages on basic profiles)
-    if profile_name == "dedup-only":
-        embed_enabled = False
-        safety_enabled = False
-        relevance_enabled = False
-    elif profile_name == "cpu-light":
-        embed_enabled = False
-        relevance_enabled = False
-
-    # 5. Enforce profile hardware capabilities constraints
-    if not profile.embed_enabled:
-        embed_enabled = False
-    if not profile.safety_enabled:
-        safety_enabled = False
-    if not profile.relevance_enabled:
-        relevance_enabled = False
-
-    # 6. Resolve execution device and batch sizes
     device = _resolve_device(profile, os.getenv("DEVICE", "auto"))
     batch_size = int(os.getenv("BATCH_SIZE", str(profile.batch_size or 1)))
 
-    # 7. Construct and return configuration settings dataclass
+    hf_home = _default_hf_home()
+
+    runtime_override = os.getenv("INFERENCE_RUNTIME", "").strip().lower()
+    runtime: RuntimeKind = (
+        runtime_override if runtime_override in ("torch", "onnx") else profile.runtime
+    )
+
+    execution_provider = (
+        os.getenv("ORT_EXECUTION_PROVIDER", profile.execution_provider).strip().lower()
+    )
+
+    precision_override = os.getenv("MODEL_PRECISION", "").strip().lower()
+    precision: PrecisionKind = (
+        precision_override
+        if precision_override in ("fp32", "fp16", "int8")
+        else profile.precision
+    )
+
+    torch_compile = _parse_bool(
+        os.getenv("TORCH_COMPILE", str(profile.torch_compile)),
+        profile.torch_compile,
+    )
+
+    model_cache_dir = os.getenv("MODEL_CACHE_DIR", f"{hf_home}/onnx")
+    tensorrt_cache_dir = os.getenv("TENSORRT_CACHE_DIR", f"{hf_home}/tensorrt")
+
     return Settings(
         worker_version=__version__,
-        # Resolve Redis url check against upstash fallbacks
         redis_url=os.getenv("REDIS_URL") or os.getenv("UPSTASH_REDIS_URL") or "",
         stream_key=os.getenv("STREAM_KEY", "unlostpaws:stream:vision-processing"),
         dlq_stream_key=os.getenv(
@@ -152,10 +144,15 @@ def load_settings() -> Settings:
         batch_size=batch_size,
         download_timeout=float(os.getenv("DOWNLOAD_TIMEOUT", "30")),
         callback_timeout=float(os.getenv("CALLBACK_TIMEOUT", "60")),
-        hf_home=os.getenv("HF_HOME", "/app/.cache/huggingface"),
+        hf_home=hf_home,
         max_concurrent_downloads=int(os.getenv("MAX_CONCURRENT_DOWNLOADS", "4")),
+        runtime=runtime,
+        execution_provider=execution_provider,
+        precision=precision,
+        torch_compile=torch_compile,
+        model_cache_dir=model_cache_dir,
+        tensorrt_cache_dir=tensorrt_cache_dir,
     )
 
 
-# Instantiate the global configuration singleton
 settings = load_settings()

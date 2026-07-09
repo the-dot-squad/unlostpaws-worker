@@ -1,60 +1,40 @@
 # ==============================================================================
-# Docker Compose Configuration for the Vision Worker Service
+# Docker Compose — CPU Vision Worker
 # ==============================================================================
-# Supports both local development (CPU) and high-performance VM deployment (GPU).
+# Starts ONE worker container using the CPU image (PyTorch + ONNX Runtime CPU).
+#
+# Usage:
+#   cp .env.example .env    # edit REDIS_URL
+#   docker compose up -d
+#
+# Do NOT combine this file with docker-compose.gpu.yml — pick one compose file
+# for the hardware you are deploying on.
 # ==============================================================================
 
 services:
   vision-worker:
-    # Option A: Pull the pre-built image from GHCR (Default)
+    # Pre-built CPU image from GHCR. Pin a release with :v1.0.0 (GPU uses :v1.0.0-gpu).
     image: ghcr.io/the-dot-squad/unlostpaws-worker:latest
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile
 
-    # Option B: Build the image from local source code (Uncomment to use)
-    # build: .
-
-    # Import configuration variables from the root .env file.
     env_file:
       - .env
 
-    # Map the host's loopback interface inside the container.
-    # - host.docker.internal:host-gateway allows the worker container to connect
-    #   to Redis, Next.js, or local servers running directly on the host machine.
-    # - This is especially helpful during local CPU development.
+    environment:
+      WORKER_IMAGE_VARIANT: cpu
+
     extra_hosts:
+      # Lets the container reach Redis / Next.js running on the host machine.
       - "host.docker.internal:host-gateway"
 
-    # Mount a persistent Docker volume for Hugging Face models.
-    # - Prevents redownloading large model parameters (SigLIP2, NSFW Classifiers)
-    #   every time the container is recreated or restarted.
     volumes:
+      # Persist downloaded Hugging Face model weights across restarts.
       - hf-cache:/app/.cache/huggingface
 
-    # Automatically restart the container unless it is explicitly stopped by the user.
     restart: unless-stopped
-    
-    # --------------------------------------------------------------------------
-    # GPU Execution Support (NVIDIA CUDA VMs)
-    # --------------------------------------------------------------------------
-    # To run on a GPU-enabled VM, uncomment the block below.
-    # Make sure you have installed:
-    #   1. The NVIDIA GPU Driver on the host system.
-    #   2. The NVIDIA Container Toolkit.
-    #   3. VISION_PROFILE=gpu-standard or gpu-quality in your .env.
-    # --------------------------------------------------------------------------
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: all
-    #           capabilities: [gpu]
 
-    # Container health verification parameters:
-    # - test: Invokes python app/healthcheck.py to evaluate active heartbeats.
-    # - interval: Frequency of checks (every 30 seconds).
-    # - timeout: Maximum duration permitted for health script completion (10s).
-    # - retries: Number of failures before flagging container as unhealthy.
-    # - start_period: Buffer period (180s) to download models before monitoring starts.
     healthcheck:
       test: ["CMD", "python", "app/healthcheck.py"]
       interval: 30s
@@ -62,7 +42,5 @@ services:
       retries: 3
       start_period: 180s
 
-# Persistent Docker volumes definition.
 volumes:
-  # Hugging Face model cache volume. Shared across worker containers.
   hf-cache:

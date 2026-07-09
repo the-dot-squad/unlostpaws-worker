@@ -1,0 +1,48 @@
+{
+  "benchmarks": [
+    {
+      "profile": "cpu-quality",
+      "runtime": "torch",
+      "execution_provider": "auto",
+      "precision": "fp32",
+      "images": 1,
+      "runs": 5,
+      "stages": {
+        "safety": {
+          "p50_ms": 92.0,
+          "p95_ms": 102.1
+        },
+        "embed": {
+          "p50_ms": 107.6,
+          "p95_ms": 114.6
+        },
+        "relevance": {
+          "p50_ms": 105.6,
+          "p95_ms": 128.6
+        }
+      }
+    },
+    {
+      "profile": "onnx-cpu-quality",
+      "runtime": "onnx",
+      "execution_provider": "cpu",
+      "precision": "int8",
+      "images": 1,
+      "runs": 5,
+      "stages": {
+        "safety": {
+          "p50_ms": 81.5,
+          "p95_ms": 82.0
+        },
+        "embed": {
+          "p50_ms": 43.4,
+          "p95_ms": 43.6
+        },
+        "relevance": {
+          "p50_ms": 40.1,
+          "p95_ms": 41.0
+        }
+      }
+    }
+  ]
+}

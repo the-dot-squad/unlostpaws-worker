@@ -13,7 +13,7 @@ import time
 from typing import Any
 
 from app.config.settings import Settings, settings
-from app.models.registry import run_in_executor
+from app.models.registry import health_models, run_in_executor
 from app.pipeline.download import DecodedImage, download_all
 from app.pipeline.quality import assess_quality
 from app.pipeline.stages.embed import embed_stage
@@ -104,17 +104,9 @@ async def run_pipeline(job: dict, cfg: Settings = settings) -> JobResult:
     if not decoded:
         return result
 
-    # Extract PIL Image objects from the decoded wrappers
     pil_images = [d.image for d in decoded]
     stage_results: dict[str, Any] = {}
 
-    # --------------------------------------------------------------------------
-    # Phase 1 — Moderation Signals (Pre-deduplication checks)
-    # --------------------------------------------------------------------------
-    # Performs checks like resolution bounds and NSFW safety before doing
-    # resource-intensive matching operations.
-    # Quality and Safety are computed concurrently.
-    # --------------------------------------------------------------------------
     moderation_tasks: dict[str, Any] = {}
     if "quality" in stages:
         # Offload OpenCV Laplacian calculations to ThreadPoolExecutor
@@ -126,30 +118,18 @@ async def run_pipeline(job: dict, cfg: Settings = settings) -> JobResult:
     # Await Phase 1 completion and update results store
     stage_results.update(await _run_stage_batch(moderation_tasks))
 
-    # --------------------------------------------------------------------------
-    # Phase 2 — Fingerprints and Match Inference
-    # --------------------------------------------------------------------------
-    # Generates unique identifiers (hashes) and visual embeddings.
-    # --------------------------------------------------------------------------
     matching_tasks: dict[str, Any] = {}
     if "fingerprint" in stages:
         # Offload hashing calculations to ThreadPoolExecutor
         matching_tasks["fingerprint"] = run_in_executor(_run_fingerprint, decoded)
     if "embed" in stages and cfg.embed_enabled:
-        # Run SigLIP2 vision encoder models
         matching_tasks["embed"] = embed_stage(pil_images, cfg)
     if "relevance" in stages and cfg.relevance_enabled and cfg.embed_enabled:
-        # Run zero-shot pet verification matching
         matching_tasks["relevance"] = relevance_stage(pil_images, pet_type, cfg)
 
     # Await Phase 2 completion
     stage_results.update(await _run_stage_batch(matching_tasks))
 
-    # --------------------------------------------------------------------------
-    # Phase 3 — Result Merging
-    # --------------------------------------------------------------------------
-    # Maps results from separate stages back to each decoded image item.
-    # --------------------------------------------------------------------------
     fingerprints = stage_results.get("fingerprint", [("", "")] * len(decoded))
     qualities = stage_results.get("quality", [None] * len(decoded))
     safeties = stage_results.get("safety", [None] * len(decoded))
@@ -207,12 +187,16 @@ def build_callback_payload(
             row["quality"] = img.quality.model_dump()
         images_out.append(row)
 
+    model_health = health_models(cfg)
     payload = CallbackPayload(
         jobType=result.job_type,
         workerVersion=cfg.worker_version,
         matchModel=cfg.match_model or "",
         safetyModel=cfg.safety_model or "",
         embeddingModel=cfg.match_model or "",
+        runtime=model_health.get("runtime", cfg.runtime),
+        executionProvider=model_health.get("executionProvider", ""),
+        modelPrecision=model_health.get("precision", cfg.precision),
         images=images_out,
         errors=[e.model_dump() for e in result.errors],
     )

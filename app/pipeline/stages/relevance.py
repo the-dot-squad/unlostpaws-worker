@@ -30,7 +30,6 @@ async def relevance_stage(
     if not embedder or not getattr(embedder, "supports_relevance", False):
         return []
 
-    # Define the blocking thread wrapper
     def _run():
         preds = embedder.relevance_batch(images, pet_type)
         return [
