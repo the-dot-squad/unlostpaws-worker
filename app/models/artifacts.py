@@ -42,12 +42,12 @@ def _cache_root(cache_dir: str, model_id: str, precision: str) -> Path:
     return Path(cache_dir) / _safe_dir_name(model_id) / precision
 
 
-def _find_onnx_file(directory: Path) -> Path | None:
-    for name in (
-        "model_quantized.onnx",
-        "model.onnx",
-        "encoder_model.onnx",
-    ):
+def _find_onnx_file(directory: Path, precision: str) -> Path | None:
+    if precision == "int8":
+        names = ("model_quantized.onnx", "model.onnx", "encoder_model.onnx")
+    else:
+        names = ("model.onnx", "encoder_model.onnx", "model_quantized.onnx")
+    for name in names:
         candidate = directory / name
         if candidate.is_file():
             return candidate
@@ -90,7 +90,7 @@ def resolve_onnx_artifacts(
     cache_root = _cache_root(cache_dir, model_id, precision)
     cache_root.mkdir(parents=True, exist_ok=True)
 
-    onnx_file = _find_onnx_file(cache_root)
+    onnx_file = _find_onnx_file(cache_root, precision)
     if onnx_file is not None:
         logger.debug("Using cached ONNX artifact: %s", onnx_file)
         return ArtifactPaths(
@@ -132,7 +132,7 @@ def resolve_onnx_artifacts(
 
     if entry.get("export_on_miss"):
         _export_model(model_id, entry["export_task"], cache_root)
-        onnx_file = _find_onnx_file(cache_root)
+        onnx_file = _find_onnx_file(cache_root, precision)
         if onnx_file is None:
             raise FileNotFoundError(
                 f"ONNX export completed but no .onnx file found in {cache_root}"
