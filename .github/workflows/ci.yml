@@ -61,6 +61,7 @@ jobs:
     permissions:
       packages: write
     strategy:
+      fail-fast: false
       matrix:
         include:
           - variant: cpu
@@ -71,7 +72,7 @@ jobs:
           - variant: gpu
             dockerfile: Dockerfile.gpu
             flavor_suffix: -gpu
-            rolling_tag: latest-gpu
+            rolling_tag: latest
             platforms: linux/amd64
 
     steps:

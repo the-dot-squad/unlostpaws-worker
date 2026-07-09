@@ -7,6 +7,7 @@ import json
 import logging
 from pathlib import Path
 
+from app.models.onnx_export import export_model_to_onnx
 from tools._paths import ROOT, ensure_import_path
 
 logger = logging.getLogger(__name__)
@@ -23,28 +24,7 @@ EXPORTS = [
 
 
 def export_model(model_id: str, task: str, output_dir: Path) -> None:
-    output_dir.mkdir(parents=True, exist_ok=True)
-    logger.info("Exporting %s (%s) -> %s", model_id, task, output_dir)
-
-    if task == "zero-shot-image-classification":
-        from optimum.onnxruntime import ORTModelForZeroShotImageClassification
-        from transformers import AutoImageProcessor, AutoTokenizer
-
-        model = ORTModelForZeroShotImageClassification.from_pretrained(
-            model_id, export=True
-        )
-        model.save_pretrained(output_dir)
-        AutoImageProcessor.from_pretrained(model_id).save_pretrained(output_dir)
-        AutoTokenizer.from_pretrained(model_id).save_pretrained(output_dir)
-    elif task == "image-classification":
-        from optimum.onnxruntime import ORTModelForImageClassification
-        from transformers import AutoImageProcessor
-
-        model = ORTModelForImageClassification.from_pretrained(model_id, export=True)
-        model.save_pretrained(output_dir)
-        AutoImageProcessor.from_pretrained(model_id).save_pretrained(output_dir)
-    else:
-        raise ValueError(f"Unsupported task: {task}")
+    export_model_to_onnx(model_id, task, output_dir)
 
 
 def quantize_model(model_dir: Path) -> None:

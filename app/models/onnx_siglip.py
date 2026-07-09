@@ -150,10 +150,10 @@ class OnnxSiglipEmbedder:
         ].astype(np.float32)
 
         logits_rows: list[np.ndarray] = []
-        for index in range(len(images)):
+        for row in pixel_values:
             feeds: dict[str, np.ndarray] = {
                 "input_ids": self._prompt_input_ids,
-                "pixel_values": pixel_values[index : index + 1],
+                "pixel_values": np.expand_dims(row, axis=0),
             }
             if (
                 self._prompt_attention_mask is not None

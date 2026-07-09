@@ -13,6 +13,8 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
+from app.models.onnx_export import export_model_to_onnx
+
 logger = logging.getLogger(__name__)
 
 _MANIFEST_PATH = Path(__file__).with_name("manifest.json")
@@ -40,12 +42,12 @@ def _cache_root(cache_dir: str, model_id: str, precision: str) -> Path:
     return Path(cache_dir) / _safe_dir_name(model_id) / precision
 
 
-def _find_onnx_file(directory: Path) -> Path | None:
-    for name in (
-        "model_quantized.onnx",
-        "model.onnx",
-        "encoder_model.onnx",
-    ):
+def _find_onnx_file(directory: Path, precision: str) -> Path | None:
+    if precision == "int8":
+        names = ("model_quantized.onnx", "model.onnx", "encoder_model.onnx")
+    else:
+        names = ("model.onnx", "encoder_model.onnx", "model_quantized.onnx")
+    for name in names:
         candidate = directory / name
         if candidate.is_file():
             return candidate
@@ -54,35 +56,7 @@ def _find_onnx_file(directory: Path) -> Path | None:
 
 
 def _export_model(model_id: str, task: str, target_dir: Path) -> None:
-    """Export a Hugging Face model to ONNX using Optimum."""
-    target_dir.mkdir(parents=True, exist_ok=True)
-    logger.info("Exporting %s to ONNX (task=%s) -> %s", model_id, task, target_dir)
-
-    if task == "zero-shot-image-classification":
-        from optimum.onnxruntime import ORTModelForZeroShotImageClassification
-
-        model = ORTModelForZeroShotImageClassification.from_pretrained(
-            model_id, export=True
-        )
-    elif task == "image-classification":
-        from optimum.onnxruntime import ORTModelForImageClassification
-
-        model = ORTModelForImageClassification.from_pretrained(model_id, export=True)
-    else:
-        raise ValueError(f"Unsupported ONNX export task: {task}")
-
-    model.save_pretrained(target_dir)
-
-    # Persist processor/tokenizer alongside ONNX weights.
-    if task == "zero-shot-image-classification":
-        from transformers import AutoImageProcessor, AutoTokenizer
-
-        AutoImageProcessor.from_pretrained(model_id).save_pretrained(target_dir)
-        AutoTokenizer.from_pretrained(model_id).save_pretrained(target_dir)
-    elif task == "image-classification":
-        from transformers import AutoImageProcessor
-
-        AutoImageProcessor.from_pretrained(model_id).save_pretrained(target_dir)
+    export_model_to_onnx(model_id, task, target_dir)
 
 
 def _download_from_hub(onnx_repo: str, relative_file: str, target_dir: Path) -> Path:
@@ -116,7 +90,7 @@ def resolve_onnx_artifacts(
     cache_root = _cache_root(cache_dir, model_id, precision)
     cache_root.mkdir(parents=True, exist_ok=True)
 
-    onnx_file = _find_onnx_file(cache_root)
+    onnx_file = _find_onnx_file(cache_root, precision)
     if onnx_file is not None:
         logger.debug("Using cached ONNX artifact: %s", onnx_file)
         return ArtifactPaths(
@@ -158,7 +132,7 @@ def resolve_onnx_artifacts(
 
     if entry.get("export_on_miss"):
         _export_model(model_id, entry["export_task"], cache_root)
-        onnx_file = _find_onnx_file(cache_root)
+        onnx_file = _find_onnx_file(cache_root, precision)
         if onnx_file is None:
             raise FileNotFoundError(
                 f"ONNX export completed but no .onnx file found in {cache_root}"
