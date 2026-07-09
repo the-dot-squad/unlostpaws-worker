@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# UnLostPaws vision worker — server-friendly operator entry point.
+#
+# Thin wrapper around `python -m tools`. Use on hosts, cron jobs, or panels
+# where you want one executable without manually activating a venv.
+#
+# Common uses:
+#   ./tools/run doctor                          # hardware detect + profile recommend
+#   ./tools/run doctor --profile cpu-quality    # preflight a profile
+#   ./tools/run doctor --smoke --profile cpu-quality
+#   ./tools/run smoke --profile cpu-quality
+#   ./tools/run benchmark --profile cpu-quality --runs 5
+#
+# All subcommands match `python -m tools <subcommand>` (doctor, smoke, benchmark,
+# export, validate). Python modules in this directory hold the real logic.
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT"
+
+if [[ -x "$ROOT/.venv/bin/python" ]]; then
+  PYTHON="$ROOT/.venv/bin/python"
+elif command -v python3.12 >/dev/null 2>&1; then
+  PYTHON="python3.12"
+else
+  PYTHON="${PYTHON:-python3}"
+fi
+
+if [[ $# -eq 0 ]]; then
+  echo "Usage: ./tools/run <subcommand> [options]" >&2
+  echo "       Subcommands: doctor, smoke, benchmark, export, validate" >&2
+  echo "       Example:    ./tools/run doctor" >&2
+  exit 1
+fi
+
+exec "$PYTHON" -m tools "$@"

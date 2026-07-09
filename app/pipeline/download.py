@@ -148,7 +148,6 @@ async def download_all(urls: list[str]) -> tuple[list[DecodedImage], list[dict]]
                 logger.exception("Download failed for URL: %s", url)
                 return url, exc
 
-    # Fire concurrent requests and gather results
     gathered = await asyncio.gather(*[fetch(u) for u in urls])
     results = list(gathered)
 

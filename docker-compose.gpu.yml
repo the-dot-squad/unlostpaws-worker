@@ -1,0 +1,64 @@
+# ==============================================================================
+# Docker Compose — GPU Vision Worker (NVIDIA CUDA)
+# ==============================================================================
+# Starts ONE worker container with GPU access. Requires:
+#   - NVIDIA GPU driver on the host
+#   - NVIDIA Container Toolkit (nvidia-container-toolkit)
+#
+# Usage:
+#   cp .env.gpu.example .env    # edit REDIS_URL
+#   docker compose -f docker-compose.gpu.yml up -d
+#
+# VISION_PROFILE and DEVICE are baked in below — you do not need to set them
+# in .env unless you want to override (e.g. gpu-quality or onnx-gpu-standard).
+#
+# Do NOT combine this file with docker-compose.yml — pick one compose file.
+# ==============================================================================
+
+services:
+  vision-worker:
+    # Pre-built GPU image from GHCR. Pin a release with :v1.0.0-gpu (CPU uses :v1.0.0).
+    image: ghcr.io/the-dot-squad/unlostpaws-worker:latest-gpu
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile.gpu
+
+    env_file:
+      - .env
+
+    # Profile and device are fixed for GPU deployments. Override in .env only
+    # if you need gpu-quality or an ONNX GPU profile.
+    environment:
+      VISION_PROFILE: gpu-standard
+      DEVICE: cuda
+      WORKER_IMAGE_VARIANT: gpu
+      RUNNING_IN_DOCKER: "true"
+
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    volumes:
+      - hf-cache:/app/.cache/huggingface
+      # TensorRT engine cache — used when VISION_PROFILE is onnx-trt-*.
+      - trt-cache:/app/.cache/tensorrt
+
+    restart: unless-stopped
+
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+    healthcheck:
+      test: ["CMD", "python3.12", "app/healthcheck.py"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 180s
+
+volumes:
+  hf-cache:
+  trt-cache:

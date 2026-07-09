@@ -23,7 +23,6 @@ def run_safety(
     classifier = get_nsfw_classifier(cfg)
     if not classifier:
         return []
-    # Execute model prediction on image batch
     preds = classifier.predict(images)
     return [
         SafetyResult(

@@ -140,6 +140,15 @@ class CallbackPayload(BaseModel):
     # Model ID used to compute vector embeddings (same as matchModel)
     embeddingModel: str = ""
 
+    # Active inference runtime (torch or onnx)
+    runtime: str = ""
+
+    # Active ONNX Execution Provider name (empty for torch)
+    executionProvider: str = ""
+
+    # Model precision used for inference (fp32, fp16, int8)
+    modelPrecision: str = ""
+
     # Listing database identifier (echoed back if present)
     listingId: str | None = None
 

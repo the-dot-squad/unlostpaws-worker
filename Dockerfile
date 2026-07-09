@@ -1,55 +1,42 @@
 # ==============================================================================
-# UnLostPaws Vision Worker - Production Dockerfile
+# UnLostPaws Vision Worker — CPU production image
 # ==============================================================================
-# Multi-stage/modular image setup for Python machine learning inference.
+# Python 3.12 slim + PyTorch (CPU) + ONNX Runtime (CPU) + Hugging Face Transformers.
+#
+# Default VISION_PROFILE=cpu-quality (full pipeline on CPU).
+# Use with: docker compose up -d  (see docker-compose.yml)
+#
+# For NVIDIA GPU use Dockerfile.gpu and docker-compose.gpu.yml instead.
 # ==============================================================================
 
-# Use Python 3.12 slim-debian image for a lightweight, secure, and production-ready foundation.
 FROM python:3.12-slim
 
-# Establish the working directory in the container.
 WORKDIR /app
 
-# Copy the dependencies file first to leverage Docker layer caching.
-# Re-running pip install only occurs if requirements.txt changes.
-COPY requirements.txt .
+COPY requirements.txt requirements-torch.txt ./
 
-# Install Python dependencies.
-# - --no-cache-dir: Prevents writing cache files, further reducing container size.
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements-torch.txt
 
-# Copy the core application source code.
 COPY app/ ./app/
+COPY tools/ ./tools/
 
-# Create a non-root system user for security compliance.
-# - useradd -u 1001: Creates user 'appuser' with UID 1001.
-# - mkdir -p: Generates Hugging Face cache directory so it can be mounted or persisted.
-# - chown -R: Restricts files within /app to the 'appuser' permission boundaries.
 RUN useradd --create-home --uid 1001 appuser \
     && mkdir -p /app/.cache/huggingface \
     && chown -R appuser:appuser /app
 
-# Switch executing user context to the non-privileged system user.
 USER appuser
 
-# Configure runtime environment variables:
-# - HF_HOME: Tells Hugging Face transformers where to read and write downloaded model weights.
-# - VISION_PROFILE: Sets default fallback hardware execution preset to cpu-quality.
-# - PYTHONPATH: Appends /app to python module resolution path so imports function correctly.
+# Hugging Face model download cache.
 ENV HF_HOME=/app/.cache/huggingface
+# ONNX artifact cache (used when VISION_PROFILE starts with onnx-).
+ENV MODEL_CACHE_DIR=/app/.cache/huggingface/onnx
 ENV VISION_PROFILE=cpu-quality
+ENV WORKER_IMAGE_VARIANT=cpu
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 ENV RUNNING_IN_DOCKER=true
 
-# Container Healthcheck Configuration:
-# - interval=30s: Run healthchecks every 30 seconds.
-# - timeout=10s: If the check takes longer than 10 seconds, count as a failure.
-# - start-period=180s: Gives the worker 3 minutes to download models during startup before failing.
-# - retries=3: Fail three times consecutively before marking the container as unhealthy.
-# - CMD: Invokes the heartbeat monitoring script app/healthcheck.py.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=180s --retries=3 \
     CMD python app/healthcheck.py
 
-# Default entrypoint CMD. Launches the asyncio daemon background consumer.
 CMD ["python", "app/main.py"]

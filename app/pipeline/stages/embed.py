@@ -28,7 +28,6 @@ async def embed_stage(
     if not embedder:
         return [[] for _ in images]
 
-    # Define the blocking thread wrapper
     def _run():
         preds = embedder.embed_batch(images)
         return [p.embedding for p in preds]
