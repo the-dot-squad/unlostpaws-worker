@@ -25,8 +25,7 @@ WORKDIR /app
 
 COPY requirements.txt requirements-gpu.txt ./
 
-RUN python3.12 -m pip install --no-cache-dir --upgrade pip \
-    && python3.12 -m pip install --no-cache-dir -r requirements-gpu.txt
+RUN python3.12 -m pip install --no-cache-dir -r requirements-gpu.txt
 
 COPY app/ ./app/
 COPY tools/ ./tools/
