@@ -12,71 +12,126 @@ When a user uploads pet photos on the site, the Next.js app enqueues a job on a 
 
 ## Architecture
 
-### Platform context
-
 ```mermaid
 flowchart TB
-    subgraph Web["unlostpaws (Next.js)"]
-        UI[Browser / API]
-        Enqueue[enqueueImageJob]
-        Webhook["/api/webhooks/vision"]
-        Mongo[(MongoDB)]
-        Qdrant[(Qdrant)]
+    %% Subgraphs representing structural layers
+    subgraph Web["🌐 Web Platform (Next.js)"]
+        UI["💻 Browser / API Client"]
+        Enqueue["enqueueImageJob()"]
+        Webhook["⚓ /api/webhooks/vision"]
+        
+        subgraph DBs["Data Stores"]
+            Mongo[("🍃 MongoDB")]
+            Qdrant[("🎯 Qdrant DB")]
+        end
     end
 
-    subgraph Infra["Shared infrastructure"]
-        Redis[(Redis Streams)]
-        S3[(S3 / R2)]
+    subgraph Infra["⚙️ Shared Infrastructure"]
+        Redis[("📥 Redis Streams")]
+        S3[("📁 S3 / R2 Storage")]
     end
 
-    subgraph Worker["unlostpaws-worker (this repo)"]
-        Consumer[Redis consumer]
-        Pipeline[Vision pipeline]
-        Callback[Webhook client]
+    subgraph Worker["⚙️ Vision Worker (unlostpaws-worker)"]
+        direction TB
+
+        subgraph Startup["Bootstrap & Startup Sequence"]
+            start["🐍 app/main.py"]
+            preflight{"⚙️ Runtime Preflight"}
+            exit1["🚨 Exit 1 (No fallback)"]
+            warmup["🔥 Model Warmup"]
+        end
+
+        subgraph Process["Job Processing Loop"]
+            consumer["🔁 queue/consumer.py loop"]
+            parse["🔍 schemas/job.py validation"]
+            orch["🎯 pipeline/orchestrator.py"]
+            dl["📥 pipeline/download.py"]
+        end
+
+        subgraph Inference["Inference Pipeline"]
+            stages{"⚖️ Profile Stages"}
+            quality["📷 quality (blur/resolution)"]
+            safety["🛡️ safety (NSFW model)"]
+            fp["🔑 fingerprint (MD5/pHash)"]
+            embed["🧠 embed (SigLIP2 768d)"]
+            rel["🐾 relevance (pet classifier)"]
+            result["📋 schemas/result.py"]
+        end
+
+        subgraph Out["Response & Queue Control"]
+            cb["📞 callback/client.py"]
+            ack["✅ Success: XACK message"]
+            requeue["🔄 Retry: Requeue + Backoff"]
+            dlq["🚨 Failure: DLQ stream"]
+        end
     end
 
+    %% Web Platform -> Infrastructure
     UI --> Enqueue
-    Enqueue -->|XADD payload| Redis
-    Redis -->|XREADGROUP| Consumer
-    Consumer --> Pipeline
-    Pipeline -->|HTTPS GET| S3
-    Pipeline --> Callback
-    Callback -->|POST results| Webhook
-    Webhook --> Mongo
-    Webhook --> Qdrant
-```
+    Enqueue -->|1. XADD image payload| Redis
 
-### Worker internals
+    %% Worker Lifecycle
+    start --> preflight
+    preflight -->|fail| exit1
+    preflight -->|pass| warmup
+    warmup --> consumer
 
-```mermaid
-flowchart TD
-    start[app/main.py] --> preflight[Runtime preflight]
-    preflight -->|fail| exit1[Exit 1 — no silent fallback]
-    preflight --> warmup[Model warmup]
-    warmup --> consumer[queue/consumer.py loop]
+    %% Processing Flow
+    Redis -->|2. XREADGROUP| consumer
+    consumer --> parse
+    parse --> orch
+    orch --> dl
+    dl -->|3. HTTPS GET| S3
+    dl --> stages
 
-    consumer --> parse[schemas/job.py validate]
-    parse --> orch[pipeline/orchestrator.py]
-    orch --> dl[pipeline/download.py]
-    dl --> stages{Profile stages}
+    %% Inference Execution
+    stages --> quality
+    stages --> safety
+    stages --> fp
+    stages --> embed
+    stages --> rel
 
-    stages --> quality[quality — blur + resolution]
-    stages --> safety[safety — NSFW model]
-    stages --> fp[fingerprint — MD5 + pHash]
-    stages --> embed[embed — SigLIP2 768-dim]
-    stages --> rel[relevance — pet likelihood]
-
-    quality --> result[schemas/result.py]
+    %% Consolidate Results
+    quality --> result
     safety --> result
     fp --> result
     embed --> result
     rel --> result
 
-    result --> cb[callback/client.py]
-    cb -->|success| ack[XACK message]
-    cb -->|retryable error| requeue[Requeue + backoff]
-    requeue --> consumer
-    cb -->|max attempts| dlq[DLQ stream + failure webhook]
+    result --> cb
+
+    %% Feedback and Control Loops
+    cb -->|4. POST Results| Webhook
+    cb --> ack
+    cb --> requeue
+    cb --> dlq
+
+    ack -->|5. Acknowledge| Redis
+    requeue -->|5. Re-queue Job| Redis
+
+    %% Webhook Database Sync
+    Webhook --> Mongo
+    Webhook --> Qdrant
+
+    %% Apply CSS Styles
+    class UI,Enqueue,Webhook web;
+    class Mongo,Qdrant db;
+    class Redis,S3 infra;
+    class start,preflight,warmup,consumer,parse,orch,dl,result,cb worker;
+    class stages,quality,safety,fp,embed,rel stage;
+    class exit1,dlq err;
+    class ack success;
+    class requeue retry;
+
+    %% Visual Styling Classes
+    classDef web fill:#eff6ff,stroke:#3b82f6,stroke-width:2px,color:#1e3a8a;
+    classDef db fill:#faf5ff,stroke:#8b5cf6,stroke-width:2px,color:#4c1d95;
+    classDef infra fill:#f0fdf4,stroke:#22c55e,stroke-width:2px,color:#14532d;
+    classDef worker fill:#f8fafc,stroke:#64748b,stroke-width:2px,color:#0f172a;
+    classDef stage fill:#fff7ed,stroke:#f97316,stroke-width:2px,color:#7c2d12;
+    classDef success fill:#f0fdf4,stroke:#16a34a,stroke-width:2px,color:#14532d;
+    classDef retry fill:#fef3c7,stroke:#d97706,stroke-width:2px,color:#78350f;
+    classDef err fill:#fef2f2,stroke:#ef4444,stroke-width:2px,color:#7f1d1d;
 ```
 
 ---
