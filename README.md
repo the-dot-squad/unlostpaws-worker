@@ -232,7 +232,7 @@ Payload shapes are defined in `app/schemas/` and must stay compatible with the w
 
 ### Prerequisites
 
-- **Python 3.12** (pinned in Docker; 3.13 works in CI; **3.14 is not supported** — torch/onnx wheels break)
+- **Python 3.12** (pinned in Docker; tested in CI; **3.14+ are not officially supported in production** — torch/onnx wheels break)
 - Redis reachable at `REDIS_URL` for integration tests that touch the broker (optional for unit tests)
 - ~2 GB disk for Hugging Face model cache on first integration/smoke run
 
@@ -278,7 +278,7 @@ ruff format app tests tools
 aislop scan                    # AI-slop / style gate (target: clean run)
 ```
 
-CI runs ruff + default pytest on Python 3.12 and 3.13 on every PR and `main` push. Docker images (CPU + GPU) are built and published to GHCR only when you push a `v*` tag (e.g. `v0.1.4`).
+CI runs ruff + default pytest on Python 3.12 on every PR and `main` push. Docker images (CPU + GPU) are built and published to GHCR only when you push a `v*` tag (e.g. `v0.1.4`).
 
 ### Project conventions
 
