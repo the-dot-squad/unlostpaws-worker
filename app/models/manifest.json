@@ -10,11 +10,11 @@
     "export_on_miss": true
   },
   "Falconsai/nsfw_image_detection": {
-    "onnx_repo": null,
+    "onnx_repo": "onnx-community/nsfw_image_detection-ONNX",
     "files": {
-      "fp32": "model.onnx",
-      "fp16": "model.onnx",
-      "int8": "model_quantized.onnx"
+      "fp32": "onnx/model.onnx",
+      "fp16": "onnx/model_fp16.onnx",
+      "int8": "onnx/model_quantized.onnx"
     },
     "export_task": "image-classification",
     "export_on_miss": true
