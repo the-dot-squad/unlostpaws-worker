@@ -130,7 +130,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # Query GitHub for the most recent non-draft, non-pre-release release tag, excluding the current version
-          LATEST_TAG=$(gh release list --exclude-drafts --exclude-pre-releases --json tagName --jq "[.[] | select(.tagName != \"${{ github.ref_name }}\")][0].tagName // empty" 2>/dev/null)
+          LATEST_TAG=$(gh release list --repo ${{ github.repository }} --exclude-drafts --exclude-pre-releases --json tagName --jq "[.[] | select(.tagName != \"${{ github.ref_name }}\")][0].tagName // empty" 2>/dev/null)
           echo "latest_tag=$LATEST_TAG" >> $GITHUB_OUTPUT
 
       - name: Create release
