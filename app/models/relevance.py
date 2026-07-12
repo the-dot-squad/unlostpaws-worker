@@ -121,7 +121,11 @@ def compute_relevance_from_logits(
 
     use_formulation = formulation or settings.relevance_formulation
     use_temp = temp_scale if temp_scale is not None else settings.relevance_temp_scale
-    use_margin = margin_threshold if margin_threshold is not None else settings.relevance_margin_threshold
+    use_margin = (
+        margin_threshold
+        if margin_threshold is not None
+        else settings.relevance_margin_threshold
+    )
 
     keys = pet_keys or PET_KEYS
 

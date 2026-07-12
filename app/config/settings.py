@@ -89,7 +89,6 @@ class Settings:
     relevance_margin_threshold: float
     max_image_pixels: int
 
-
     @property
     def requires_cuda(self) -> bool:
         if self.runtime == "torch":
@@ -168,24 +167,32 @@ def load_settings() -> Settings:
         "OPENVINO_DEVICE", "NPU" if execution_provider == "openvino" else "CPU"
     )
 
-    relevance_formulation = os.getenv("RELEVANCE_FORMULATION", "unified_softmax").strip().lower()
+    relevance_formulation = (
+        os.getenv("RELEVANCE_FORMULATION", "unified_softmax").strip().lower()
+    )
     if relevance_formulation not in ("baseline", "unified_softmax"):
         relevance_formulation = "unified_softmax"
 
     relevance_temp_scale_raw = os.getenv("RELEVANCE_TEMP_SCALE", "").strip()
-    relevance_temp_scale = float(relevance_temp_scale_raw) if relevance_temp_scale_raw else 1.5
+    relevance_temp_scale = (
+        float(relevance_temp_scale_raw) if relevance_temp_scale_raw else 1.5
+    )
 
     relevance_threshold_raw = os.getenv("RELEVANCE_THRESHOLD", "").strip()
     if relevance_threshold_raw:
         relevance_threshold = float(relevance_threshold_raw)
     else:
-        relevance_threshold = 0.32 if relevance_formulation == "unified_softmax" else 0.30
+        relevance_threshold = (
+            0.32 if relevance_formulation == "unified_softmax" else 0.30
+        )
 
     relevance_margin_threshold_raw = os.getenv("RELEVANCE_MARGIN_THRESHOLD", "").strip()
     if relevance_margin_threshold_raw:
         relevance_margin_threshold = float(relevance_margin_threshold_raw)
     else:
-        relevance_margin_threshold = 0.40 if relevance_formulation == "unified_softmax" else 0.75
+        relevance_margin_threshold = (
+            0.40 if relevance_formulation == "unified_softmax" else 0.75
+        )
 
     return Settings(
         worker_version=__version__,

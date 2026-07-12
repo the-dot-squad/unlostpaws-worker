@@ -128,7 +128,6 @@ def test_decode_image_decompression_bomb():
         Image.MAX_IMAGE_PIXELS = old_limit
 
 
-
 @pytest.mark.asyncio
 async def test_download_all_mixed_results():
     from io import BytesIO
