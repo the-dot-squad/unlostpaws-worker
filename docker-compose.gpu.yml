@@ -9,8 +9,8 @@
 #   cp .env.gpu.example .env    # edit REDIS_URL
 #   docker compose -f docker-compose.gpu.yml up -d
 #
-# VISION_PROFILE and DEVICE are baked in below — you do not need to set them
-# in .env unless you want to override (e.g. gpu-quality or onnx-gpu-standard).
+# VISION_PROFILE and DEVICE are baked in below — override in .env if needed
+# (e.g. INFERENCE_RUNTIME=onnx ORT_EXECUTION_PROVIDER=tensorrt).
 #
 # Do NOT combine this file with docker-compose.yml — pick one compose file.
 # ==============================================================================
@@ -26,10 +26,9 @@ services:
     env_file:
       - .env
 
-    # Profile and device are fixed for GPU deployments. Override in .env only
-    # if you need gpu-quality or an ONNX GPU profile.
     environment:
-      VISION_PROFILE: gpu-standard
+      VISION_PROFILE: quality
+      INFERENCE_RUNTIME: torch
       DEVICE: cuda
       WORKER_IMAGE_VARIANT: gpu
       RUNNING_IN_DOCKER: "true"
@@ -39,7 +38,7 @@ services:
 
     volumes:
       - hf-cache:/app/.cache/huggingface
-      # TensorRT engine cache — used when VISION_PROFILE is onnx-trt-*.
+      # TensorRT engine cache — used when ORT_EXECUTION_PROVIDER=tensorrt.
       - trt-cache:/app/.cache/tensorrt
 
     restart: unless-stopped

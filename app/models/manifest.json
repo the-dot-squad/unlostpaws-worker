@@ -9,6 +9,16 @@
     "export_task": "zero-shot-image-classification",
     "export_on_miss": true
   },
+  "google/siglip2-base-patch16-384": {
+    "onnx_repo": "onnx-community/siglip2-base-patch16-384-ONNX",
+    "files": {
+      "fp32": "onnx/model.onnx",
+      "fp16": "onnx/model.onnx",
+      "int8": "onnx/model_quantized.onnx"
+    },
+    "export_task": "zero-shot-image-classification",
+    "export_on_miss": true
+  },
   "Falconsai/nsfw_image_detection": {
     "onnx_repo": "onnx-community/nsfw_image_detection-ONNX",
     "files": {

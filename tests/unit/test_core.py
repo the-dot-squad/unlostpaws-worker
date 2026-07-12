@@ -1,7 +1,7 @@
 import pytest
 from PIL import Image
 
-from app.config.profiles import PRESETS, get_preset
+from app.config.profiles import PRESETS, SIGLIP2_BASE, SIGLIP2_QUALITY, get_preset
 from app.pipeline.quality import assess_quality, laplacian_blur_score
 from app.pipeline.stages.fingerprint import compute_md5, fingerprint_image
 from app.schemas.result import (
@@ -18,13 +18,15 @@ def _solid_image(size=(100, 100), color=(128, 128, 128)) -> Image.Image:
 
 
 def test_profiles_known():
-    assert "cpu-quality" in PRESETS
-    profile = get_preset("cpu-quality")
-    assert profile.stages[0] == "quality"
-    assert profile.stages[1] == "safety"
-    assert "embed" in profile.stages
-    assert profile.relevance_enabled is True
-    assert profile.match_model == "google/siglip2-base-patch16-224"
+    assert set(PRESETS.keys()) == {"dedup-only", "standard", "quality"}
+    standard = get_preset("standard")
+    assert standard.match_model == SIGLIP2_BASE
+    assert standard.relevance_enabled is True
+    assert "relevance" in standard.stages
+
+    quality = get_preset("quality")
+    assert quality.match_model == SIGLIP2_QUALITY
+    assert quality.relevance_enabled is True
 
 
 def test_profiles_unknown_raises():

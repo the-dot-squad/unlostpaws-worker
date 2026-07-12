@@ -6,10 +6,11 @@
 #
 # Common uses:
 #   ./tools/run doctor                          # hardware detect + profile recommend
-#   ./tools/run doctor --profile cpu-quality    # preflight a profile
-#   ./tools/run doctor --smoke --profile cpu-quality
-#   ./tools/run smoke --profile cpu-quality
-#   ./tools/run benchmark --profile cpu-quality --runs 5
+#   ./tools/run doctor --profile quality    # preflight a profile
+#   ./tools/run doctor --smoke --profile quality
+#   ./tools/run smoke --profile quality
+#   ./tools/run benchmark --profile quality --runs 5
+#   ./tools/run eval --profile quality
 #
 # All subcommands match `python -m tools <subcommand>` (doctor, smoke, benchmark,
 # export, validate). Python modules in this directory hold the real logic.

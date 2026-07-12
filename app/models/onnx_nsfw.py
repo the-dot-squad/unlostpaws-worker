@@ -78,7 +78,9 @@ class OnnxNsfwClassifier:
             if (artifacts.model_dir / "preprocessor_config.json").exists()
             else self.model_id
         )
-        self._processor = AutoImageProcessor.from_pretrained(processor_source)
+        self._processor = AutoImageProcessor.from_pretrained(
+            processor_source, use_fast=False
+        )
 
         config_path = artifacts.model_dir / "config.json"
         if config_path.is_file():

@@ -8,23 +8,49 @@ from importlib import reload
 from tools._console import err, out
 from tools._paths import ensure_import_path
 
+# Estimated Hugging Face cache size on first model download (match + safety).
+_PROFILE_DISK_HINT_MB: dict[str, int] = {
+    "dedup-only": 0,
+    "standard": 1024,
+    "quality": 1536,
+}
 
-def print_report(hardware, profile: str, run_hint: str, warnings: list[str]) -> None:
+
+def _print_profile_resources(profile_name: str) -> None:
+    from app.config.profiles import get_preset
+
+    preset = get_preset(profile_name)
+    disk_mb = _PROFILE_DISK_HINT_MB.get(profile_name, 0)
+    out(f"Profile resources ({profile_name}):")
+    out(f"  Min RAM: {preset.min_ram_mb} MB")
+    if preset.min_vram_mb:
+        out(f"  Min GPU VRAM (optional): {preset.min_vram_mb} MB")
+    if disk_mb:
+        out(f"  HF model cache (first run): ~{disk_mb / 1024:.1f} GB")
+
+
+def print_report(hardware, config) -> None:
     from app.config.runtime_validation import format_hardware_summary
 
     out("UnLostPaws Vision Worker — hardware doctor")
     out("=" * 50)
     out(f"Hardware: {format_hardware_summary(hardware)}")
-    out(f"Recommended profile: VISION_PROFILE={profile}")
-    out(f"Run: {run_hint}")
-    for warning in warnings:
+    out("Recommended configuration:")
+    out(f"  VISION_PROFILE={config.vision_profile}")
+    out(f"  INFERENCE_RUNTIME={config.inference_runtime}")
+    if config.inference_runtime == "onnx":
+        out(f"  ORT_EXECUTION_PROVIDER={config.execution_provider}")
+    else:
+        out(f"  DEVICE={config.device}")
+    out(f"Run: {config.run_hint}")
+    for warning in config.warnings:
         out(f"Warning: {warning}")
     out()
     out("First-run checklist:")
     out("  1. cp .env.example .env")
     out("  2. Edit REDIS_URL (use rediss:// for Upstash TLS)")
-    out(f"  3. Set VISION_PROFILE={profile}  (GPU compose bakes this in)")
-    out(f"  4. {run_hint}")
+    out(f"  3. Set VISION_PROFILE={config.vision_profile}")
+    out(f"  4. {config.run_hint}")
 
 
 def validate_profile(profile: str) -> None:
@@ -48,15 +74,16 @@ def validate_profile(profile: str) -> None:
     try:
         validate_runtime(cfg, hardware, phase="preflight")
         out(f"Preflight OK for VISION_PROFILE={profile}")
+        _print_profile_resources(profile)
     except RuntimeValidationError as exc:
         err(f"Preflight FAILED for VISION_PROFILE={profile}:\n{exc}")
         raise SystemExit(1) from exc
 
 
-def detect_and_recommend() -> tuple[object, str, str, list[str]]:
+def detect_and_recommend():
     ensure_import_path()
-    from app.config.runtime_validation import detect_hardware, recommend_profile
+    from app.config.runtime_validation import detect_hardware, recommend_config
 
     hardware = detect_hardware()
-    profile, run_hint, warnings = recommend_profile(hardware)
-    return hardware, profile, run_hint, warnings
+    config = recommend_config(hardware)
+    return hardware, config

@@ -1,8 +1,8 @@
 # Vision Worker Guide
 
-How to deploy, configure profiles, and troubleshoot the UnLostPaws vision worker.
+Deploy, configure, and troubleshoot the UnLostPaws vision worker.
 
-**Related:** [PERFORMANCE.md](PERFORMANCE.md) (benchmarks) · [MODEL_EXPORT.md](MODEL_EXPORT.md) (maintainer ONNX export)
+**Related:** [PERFORMANCE.md](PERFORMANCE.md) · [MODEL_EXPORT.md](MODEL_EXPORT.md)
 
 ---
 
@@ -10,72 +10,41 @@ How to deploy, configure profiles, and troubleshoot the UnLostPaws vision worker
 
 | Term | Meaning |
 | :--- | :--- |
-| **Vision profile** (`VISION_PROFILE`) | One env var — stages, models, runtime, hardware |
-| **Runtime** | `torch` (PyTorch) or `onnx` (ONNX Runtime) |
-| **Execution provider** | ONNX hardware driver: CPU, CUDA, CoreML, … |
-| **Pipeline stage** | `quality` → `safety` → `fingerprint` → `embed` → `relevance` |
+| **Capability** (`VISION_PROFILE`) | `dedup-only`, `standard`, or `quality` |
+| **Runtime** (`INFERENCE_RUNTIME`) | `torch` or `onnx` |
+| **Hardware** | `DEVICE` (torch) or `ORT_EXECUTION_PROVIDER` (onnx) |
+| **Pipeline** | quality → safety → fingerprint → fused match (embed + relevance) |
 
-Set **one** `VISION_PROFILE`. The worker validates hardware at startup and **exits** on mismatch (no silent GPU→CPU fallback).
+The worker validates hardware at startup and **exits** on mismatch (no silent GPU→CPU fallback).
 
 ---
 
 ## Quick start
 
 ```bash
-cp .env.example .env          # edit REDIS_URL (use rediss:// for Upstash TLS)
-./tools/run doctor                  # or: python -m tools doctor
+cp .env.example .env
+./tools/run doctor --profile quality
 docker compose up -d
-python -m tools smoke --profile cpu-quality   # optional; downloads models first run
+python -m tools smoke --profile quality
 ```
 
 | Target | Command |
 | :--- | :--- |
 | CPU / dev | `docker compose up -d` |
 | NVIDIA GPU | `docker compose -f docker-compose.gpu.yml up -d` |
-| Apple Silicon | `python -m tools doctor` → run `python app/main.py` natively |
+| Apple Silicon | `./tools/run doctor` → run `python app/main.py` natively |
 
 ---
 
-## Tier 1 — supported profiles (tested)
+## Capability tiers
 
-Use these unless you have a specific reason not to.
+| Profile | SigLIP | Relevance | Embed dim | Min RAM | Use when |
+|---------|--------|-----------|-----------|---------|----------|
+| `dedup-only` | — | off | — | 512 MB | Hashing only |
+| `standard` | base @ 224px | on | 768 | 3 GB | Fast indexing |
+| `quality` | base @ 384px | on | 768 | 4 GB | Default production |
 
-| Profile | Hardware | Compose | Notes |
-| :--- | :--- | :--- | :--- |
-| `cpu-quality` | x86/ARM CPU | `docker-compose.yml` | Default dev — full torch pipeline |
-| `onnx-cpu-quality` | x86/ARM CPU | `docker-compose.yml` | INT8 ONNX; good for ARM SBCs |
-| `gpu-standard` | NVIDIA CUDA | `docker-compose.gpu.yml` | Default production GPU |
-| `onnx-apple` | Apple Silicon | Native macOS only | CoreML EP — not Linux Docker |
-| `dedup-only` | Any CPU | Either | No ML — quality + fingerprint only |
-
----
-
-## Tier 2 — advanced (supported, narrower use)
-
-| Profile | When |
-| :--- | :--- |
-| `cpu-light` | NSFW only, no embeddings |
-| `cpu-standard` | Embed + safety, no relevance |
-| `onnx-cpu-standard` | ONNX variant of cpu-standard |
-| `gpu-quality` | StrangerGuard safety on GPU |
-| `onnx-gpu-standard` | ONNX FP16 on NVIDIA |
-| `onnx-trt-standard` | TensorRT max throughput (+ `trt-cache` volume) |
-
----
-
-## Tier 3 — experimental / special setup
-
-Requires extra packages or hardware not in the default Docker images. Not in CI smoke matrix.
-
-| Profile | Requirement |
-| :--- | :--- |
-| `onnx-intel` | `pip install onnxruntime-openvino` |
-| `onnx-qualcomm` | Windows ARM64 + `onnxruntime-qnn` |
-| `onnx-trt-quality`, `onnx-gpu-quality` | GPU image + StrangerGuard |
-
-**Not supported:** Google Coral Edge TPU (models too large). Use `onnx-cpu-quality` on ARM64 instead.
-
-Full preset list: [`app/config/profiles.py`](../app/config/profiles.py).
+Both ML profiles run identical stages. Default difference: SigLIP resolution (224px vs 384px).
 
 ---
 
@@ -84,30 +53,79 @@ Full preset list: [`app/config/profiles.py`](../app/config/profiles.py).
 | Variable | Required | Default | Description |
 | :--- | :---: | :--- | :--- |
 | `REDIS_URL` | Yes | — | Use `rediss://` for TLS (Upstash) |
-| `VISION_PROFILE` | No | `cpu-quality` | Main config knob |
-| `CONSUMER_NAME` | No | `worker-1` | Unique worker instance id |
-| `MAX_JOB_ATTEMPTS` | No | `3` | Retries before DLQ |
-| `HF_HOME` | No | auto | Model cache (auto per host) |
+| `VISION_PROFILE` | No | `quality` | Capability tier |
+| `INFERENCE_RUNTIME` | No | `torch` | `torch` or `onnx` |
+| `DEVICE` | No | `auto` | Torch: `cpu` or `cuda` |
+| `ORT_EXECUTION_PROVIDER` | No | `cpu` | ONNX EP selection |
+| `CONSUMER_NAME` | No | `worker-1` | Worker instance id |
 
-Stream keys, timeouts, and consumer group defaults are in [`.env.example`](../.env.example).
+Optional: `MATCH_MODEL`, `SAFETY_MODEL`, `MODEL_PRECISION`, `BATCH_SIZE`, `TORCH_COMPILE`, `OPENVINO_DEVICE`.
 
-GPU compose bakes in `VISION_PROFILE=gpu-standard`, `DEVICE=cuda`, `WORKER_IMAGE_VARIANT=gpu`.
+Full template: [`.env.example`](../.env.example).
+
+---
+
+## Example deployments
+
+| Host | VISION_PROFILE | INFERENCE_RUNTIME | DEVICE / ORT_EXECUTION_PROVIDER |
+| :--- | :--- | :--- | :--- |
+| Dev laptop CPU | `quality` | `torch` | `DEVICE=cpu` |
+| Linux Docker ARM | `quality` | `onnx` | `cpu` |
+| Apple Silicon native | `quality` | `onnx` | `coreml` |
+| NVIDIA GPU prod | `quality` | `torch` | `DEVICE=cuda` |
+| NVIDIA max throughput | `quality` | `onnx` | `tensorrt` |
+
+GPU compose bakes in `VISION_PROFILE=quality`, `INFERENCE_RUNTIME=torch`, `DEVICE=cuda`.
+
+---
+
+## Job payload and `petType`
+
+Jobs are validated at the Redis consumer boundary ([`app/schemas/job.py`](../app/schemas/job.py)).
+
+```json
+{
+  "jobType": "listing",
+  "listingId": "listing_123",
+  "imageUrls": ["https://example.com/pet.jpg"],
+  "petType": "dog"
+}
+```
+
+| Field | Required | Notes |
+| :--- | :---: | :--- |
+| `imageUrls` | Yes | At least one HTTPS URL |
+| `petType` | No | Species hint; omit or `""` for zero-shot |
+
+**Valid `petType` values:** `dog`, `cat`, `bird`, `rabbit`, `hamster`, `fish`, `reptile`, `horse`, `other`.
+
+Unknown values are normalized to `""` during validation. The hint affects relevance scoring and `topLabel` only — not the embedding vector.
+
+---
+
+## Relevance scoring
+
+The relevance stage converts SigLIP zero-shot logits into `petLikelihood` (0–1) and `topLabel`.
+
+1. **Threshold 0.30** — binary pet vs non-pet gate (maximizes recall on eval set)
+2. **Margin fallback 0.75** — if top-two pet class logits differ by less than 0.75, label falls back to `"other"` (generic pet)
+3. **`petType` hint** — when provided and within margin of the top prediction, stabilizes `topLabel` to the hinted species; boosts likelihood toward that class
+
+Hint-stabilized subclass accuracy on the 305-image eval: **51.0% → 77.1%** (standard profile). Reproduce: `python dev_benchmarks/simulate_hints.py`.
 
 ---
 
 ## Operator CLI
 
 ```bash
-./tools/run doctor                         # detect hardware + recommend profile
-./tools/run doctor --profile cpu-quality   # preflight only
-./tools/run smoke --profile cpu-quality    # full pipeline test
-./tools/run benchmark --profile cpu-quality --runs 5
-./tools/run benchmark --all --output docs/benchmarks.json
+./tools/run doctor --profile quality
+./tools/run smoke --profile quality
+./tools/run benchmark --profile quality --runs 5
+python dev_benchmarks/evaluate_workflow.py --profile standard   # 305-image accuracy
+python dev_benchmarks/evaluate_workflow.py --profile quality
 ```
 
-Same commands via Python: `python -m tools <subcommand>`.
-
-Maintainer / CI:
+Maintainers:
 
 ```bash
 ./tools/run export --output output/onnx
@@ -118,20 +136,11 @@ Maintainer / CI:
 
 ## Startup validation
 
-```mermaid
-flowchart TD
-    start[main.py] --> preflight[preflight validate_runtime]
-    preflight -->|fail| exit1[exit 1]
-    preflight -->|ok| warmup[model warmup]
-    warmup --> post[post-warmup validate_runtime]
-    post -->|ok| consumer[Redis consumer]
-```
-
 Common fatal misconfigurations:
 
-- `gpu-standard` on CPU Docker image → use `docker-compose.gpu.yml`
-- `onnx-apple` inside Linux Docker → run natively on macOS
-- CUDA profile without NVIDIA drivers / Container Toolkit
+- `DEVICE=cuda` on CPU Docker image → use `docker-compose.gpu.yml`
+- `ORT_EXECUTION_PROVIDER=coreml` inside Linux Docker → run natively on macOS
+- CUDA requested but `torch.cuda.is_available()` is false
 
 ---
 
@@ -142,18 +151,19 @@ Common fatal misconfigurations:
 | Worker exits on start | `docker compose logs` + `python -m tools doctor` |
 | Upstash connection failed | Use `rediss://` not `redis://` |
 | Slow first job | Normal — models download on first warmup |
-| INT8 relevance drift | `python -m tools validate` or use torch profile |
+| INT8 relevance drift | `python -m tools validate` or use torch runtime |
 
 ---
 
 ## Webhook metadata
 
-Callbacks include runtime info for debugging:
+Callbacks include runtime info:
 
 ```json
 {
   "runtime": "onnx",
   "executionProvider": "CPUExecutionProvider",
-  "modelPrecision": "int8"
+  "modelPrecision": "int8",
+  "matchModel": "google/siglip2-base-patch16-384"
 }
 ```

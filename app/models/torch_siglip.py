@@ -24,7 +24,7 @@ from app.models.relevance import (
     PET_PROMPTS,
     compute_relevance_from_logits,
 )
-from app.models.types import EmbedPrediction, RelevancePrediction
+from app.models.types import EmbedPrediction, MatchPrediction, RelevancePrediction
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +66,9 @@ class TorchSiglipEmbedder:
             self.device,
             self.torch_compile,
         )
-        self._image_processor = AutoImageProcessor.from_pretrained(self.model_id)
+        self._image_processor = AutoImageProcessor.from_pretrained(
+            self.model_id, use_fast=False
+        )
         self._tokenizer = AutoTokenizer.from_pretrained(self.model_id)
         self._model = AutoModelForZeroShotImageClassification.from_pretrained(
             self.model_id
@@ -85,7 +87,11 @@ class TorchSiglipEmbedder:
 
         all_prompts = list(PET_PROMPTS.values()) + NEGATIVE_PROMPTS
         text_inputs = self._tokenizer(
-            all_prompts, return_tensors="pt", padding=True, truncation=True
+            all_prompts,
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=64,
         )
         text_inputs = {k: v.to(self.device) for k, v in text_inputs.items()}
 
@@ -142,19 +148,41 @@ class TorchSiglipEmbedder:
     def relevance_batch(
         self, images: list[Image.Image], pet_type: str = ""
     ) -> list[RelevancePrediction]:
-        self.load()
-        assert self._model is not None and self._text_features is not None
+        return [
+            pred.relevance
+            for pred in self.match_batch(images, pet_type, include_relevance=True)
+            if pred.relevance is not None
+        ]
 
-        results: list[RelevancePrediction] = []
+    def match_batch(
+        self,
+        images: list[Image.Image],
+        pet_type: str = "",
+        *,
+        include_relevance: bool = True,
+    ) -> list[MatchPrediction]:
+        """Single vision forward pass returning embedding and optional relevance."""
+        self.load()
+        results: list[MatchPrediction] = []
         for start in range(0, len(images), self.batch_size):
             chunk = images[start : start + self.batch_size]
             image_features = self._image_features(chunk)
-            logits_batch = self._logits_from_features(image_features)
+            logits_batch = (
+                self._logits_from_features(image_features)
+                if include_relevance and self.supports_relevance
+                else None
+            )
 
-            for logits in logits_batch:
-                pred = compute_relevance_from_logits(
-                    np.asarray(logits.cpu().tolist(), dtype=np.float64),
-                    pet_type=pet_type,
+            for row_idx, features in enumerate(image_features):
+                embedding = features.cpu().tolist()
+                relevance = None
+                if logits_batch is not None:
+                    logits = logits_batch[row_idx]
+                    relevance = compute_relevance_from_logits(
+                        np.asarray(logits.cpu().tolist(), dtype=np.float64),
+                        pet_type=pet_type,
+                    )
+                results.append(
+                    MatchPrediction(embedding=embedding, relevance=relevance)
                 )
-                results.append(pred)
         return results

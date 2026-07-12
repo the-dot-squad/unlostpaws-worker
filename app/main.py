@@ -7,6 +7,10 @@ termination signals (SIGINT/SIGTERM) to support graceful container shutdowns, an
 the asynchronous consumer event loop for Redis Streams.
 """
 
+import os
+
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
 import asyncio
 import logging
 import signal

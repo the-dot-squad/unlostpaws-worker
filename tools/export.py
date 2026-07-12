@@ -13,7 +13,16 @@ from tools._paths import ROOT, ensure_import_path
 logger = logging.getLogger(__name__)
 
 EXPORTS = [
-    ("google/siglip2-base-patch16-224", "zero-shot-image-classification", "siglip2"),
+    (
+        "google/siglip2-base-patch16-224",
+        "zero-shot-image-classification",
+        "siglip2-base",
+    ),
+    (
+        "google/siglip2-base-patch16-384",
+        "zero-shot-image-classification",
+        "siglip2-quality",
+    ),
     ("Falconsai/nsfw_image_detection", "image-classification", "nsfw-falconsai"),
     (
         "strangerguardhf/nsfw-image-detection",

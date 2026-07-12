@@ -34,6 +34,7 @@ def test_health_models():
     assert "precision" in res
     assert "matchModel" in res
     assert "safetyLoaded" in res
+    assert "relevanceEnabled" in res
 
 
 @pytest.mark.asyncio

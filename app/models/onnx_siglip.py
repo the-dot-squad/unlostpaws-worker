@@ -20,7 +20,7 @@ from app.models.relevance import (
     PET_PROMPTS,
     compute_relevance_from_logits,
 )
-from app.models.types import EmbedPrediction, RelevancePrediction
+from app.models.types import EmbedPrediction, MatchPrediction, RelevancePrediction
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +94,9 @@ class OnnxSiglipEmbedder:
             else self.model_id
         )
 
-        self._image_processor = AutoImageProcessor.from_pretrained(processor_source)
+        self._image_processor = AutoImageProcessor.from_pretrained(
+            processor_source, use_fast=False
+        )
         self._tokenizer = AutoTokenizer.from_pretrained(tokenizer_source)
         self._precompute_prompt_tokens()
 
@@ -104,7 +106,11 @@ class OnnxSiglipEmbedder:
 
         all_prompts = list(PET_PROMPTS.values()) + NEGATIVE_PROMPTS
         text_inputs = self._tokenizer(
-            all_prompts, return_tensors="np", padding=True, truncation=True
+            all_prompts,
+            return_tensors="np",
+            padding=True,
+            truncation=True,
+            max_length=64,
         )
         self._prompt_input_ids = text_inputs["input_ids"].astype(np.int64)
         if "attention_mask" in text_inputs:
@@ -124,7 +130,11 @@ class OnnxSiglipEmbedder:
         feeds: dict[str, np.ndarray] = {"pixel_values": pixel_values}
         if "input_ids" in self._session.input_names and self._tokenizer is not None:
             dummy = self._tokenizer(
-                [""], return_tensors="np", padding=True, truncation=True
+                [""],
+                return_tensors="np",
+                padding=True,
+                truncation=True,
+                max_length=64,
             )
             feeds["input_ids"] = np.tile(
                 dummy["input_ids"].astype(np.int64), (len(images), 1)
@@ -178,10 +188,52 @@ class OnnxSiglipEmbedder:
     def relevance_batch(
         self, images: list[Image.Image], pet_type: str = ""
     ) -> list[RelevancePrediction]:
+        return [
+            pred.relevance
+            for pred in self.match_batch(images, pet_type, include_relevance=True)
+            if pred.relevance is not None
+        ]
+
+    def match_batch(
+        self,
+        images: list[Image.Image],
+        pet_type: str = "",
+        *,
+        include_relevance: bool = True,
+    ) -> list[MatchPrediction]:
+        """Run one ONNX forward per image; returns embedding and optional relevance."""
         self.load()
-        results: list[RelevancePrediction] = []
+        results: list[MatchPrediction] = []
         for start in range(0, len(images), self.batch_size):
             chunk = images[start : start + self.batch_size]
-            for logits in self._logits_per_image(chunk):
-                results.append(compute_relevance_from_logits(logits, pet_type=pet_type))
+            if include_relevance and self.supports_relevance:
+                for image in chunk:
+                    pixel_values = self._image_processor(
+                        images=[image], return_tensors="np"
+                    )["pixel_values"].astype(np.float32)
+                    feeds: dict[str, np.ndarray] = {
+                        "input_ids": self._prompt_input_ids,
+                        "pixel_values": pixel_values,
+                    }
+                    if (
+                        self._prompt_attention_mask is not None
+                        and "attention_mask" in self._session.input_names
+                    ):
+                        feeds["attention_mask"] = self._prompt_attention_mask
+
+                    outputs = self._session.run(feeds)
+                    embedding = _l2_normalize(
+                        outputs["image_embeds"].astype(np.float64)
+                    )[0].tolist()
+                    logits = np.asarray(
+                        outputs["logits_per_image"][0], dtype=np.float64
+                    )
+                    relevance = compute_relevance_from_logits(logits, pet_type=pet_type)
+                    results.append(
+                        MatchPrediction(embedding=embedding, relevance=relevance)
+                    )
+            else:
+                features = self._image_features(chunk)
+                for vec in features.tolist():
+                    results.append(MatchPrediction(embedding=vec))
         return results
