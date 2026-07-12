@@ -53,19 +53,44 @@ flowchart TB
 
 ## Quick start
 
+You can set up and run the UnLostPaws Vision Worker using our interactive setup script.
+
+### Option 1: Quick Web-based Setup (No Clone Required)
+If you just want to run the pre-built worker in Docker without cloning this repository, execute this command in an empty directory:
 ```bash
-cp .env.example .env          # set REDIS_URL (rediss:// for Upstash TLS)
-./tools/run doctor              # hardware detect + profile resource hints
-docker compose up -d
+curl -fsSL https://raw.githubusercontent.com/the-dot-squad/unlostpaws-worker/main/tools/run.sh | bash
 ```
+
+### Option 2: Clone & Local Setup
+If you have cloned the repository, simply run the setup script:
+```bash
+./tools/run.sh setup
+```
+This interactive script will:
+1. Detect your system specs (CPU, GPU, RAM, Disk).
+2. Help you choose between CPU/GPU and PyTorch/ONNX runtimes.
+3. Automatically download/copy compose files, verify hardware limits, and configure your `.env` file.
+4. Prompt you to launch the container immediately.
+
+For specific environment combinations, see the table below:
 
 | I have… | Suggested env | How to run |
 | :--- | :--- | :--- |
 | Dev laptop / Linux CPU | `VISION_PROFILE=quality` `INFERENCE_RUNTIME=torch` `DEVICE=cpu` | `docker compose up -d` |
 | ARM64 SBC / Graviton | `VISION_PROFILE=quality` `INFERENCE_RUNTIME=onnx` `ORT_EXECUTION_PROVIDER=cpu` | `docker compose up -d` |
-| NVIDIA GPU | `VISION_PROFILE=quality` `DEVICE=cuda` | `docker compose -f docker-compose.gpu.yml up -d` |
+| NVIDIA GPU | `VISION_PROFILE=quality` `DEVICE=cuda` | `docker compose up -d` (after running setup) |
 | Apple Silicon | `VISION_PROFILE=quality` `ORT_EXECUTION_PROVIDER=coreml` | Native Python on macOS (CoreML not available in Linux Docker) |
 | Hashing only | `VISION_PROFILE=dedup-only` | Any CPU path |
+
+**CLI Subcommands:**
+Once configured, you can run other local development subcommands inside the cloned repository:
+```bash
+./tools/run.sh doctor       # Hardware preflight and configuration doctor
+./tools/run.sh smoke        # Run a quick smoke test on the worker pipeline
+./tools/run.sh benchmark    # Profile worker latency and throughput
+./tools/run.sh export       # Export PyTorch models to ONNX Runtime
+./tools/run.sh validate     # Validate database or stream schema messages
+```
 
 **Docs:** [Guide](docs/GUIDE.md) · [Performance](docs/PERFORMANCE.md) · [ONNX export (maintainers)](docs/MODEL_EXPORT.md)
 
@@ -103,7 +128,7 @@ Also required:
 - **Redis** reachable at `REDIS_URL`
 - **Apple Silicon CoreML** — run Python natively on macOS; CoreML is not available inside Linux Docker containers
 
-Run `./tools/run doctor --profile quality` to print resource hints for your host.
+Run `./tools/run.sh doctor --profile quality` to print resource hints for your host.
 
 ---
 
@@ -194,14 +219,14 @@ CI smoke fixtures (`python -m tools eval`) use synthetic PNGs — not for accura
 
 ## Operator tools
 
-Python implements all logic (`python -m tools`). On servers, use **`./tools/run`** — it picks `.venv/bin/python` when present.
+Python implements all logic (`python -m tools`). On servers, use **`./tools/run.sh`** — it picks `.venv/bin/python` when present.
 
 ```bash
-./tools/run doctor --profile quality     # preflight + resource hints
-./tools/run smoke --profile quality      # full pipeline test
-./tools/run benchmark --profile quality --runs 5
-./tools/run eval --profile quality       # CI smoke fixtures only
-./tools/run export --output output/onnx  # maintainers
+./tools/run.sh doctor --profile quality     # preflight + resource hints
+./tools/run.sh smoke --profile quality      # full pipeline test
+./tools/run.sh benchmark --profile quality --runs 5
+./tools/run.sh eval --profile quality       # CI smoke fixtures only
+./tools/run.sh export --output output/onnx  # maintainers
 ```
 
 Equivalent without bash:
@@ -281,7 +306,7 @@ CI runs ruff + unit pytest on Python 3.12. Docker images publish to GHCR on `v*`
 | Pipeline stage | `app/pipeline/stages/`, orchestrator, schemas, tests |
 | Webhook field | `app/schemas/result.py` + coordinated change in **unlostpaws** |
 
-Pull requests should include unit tests. Run `./tools/run smoke --profile quality` when touching inference.
+Pull requests should include unit tests. Run `./tools/run.sh smoke --profile quality` when touching inference.
 
 ---
 
