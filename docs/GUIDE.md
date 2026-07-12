@@ -61,6 +61,13 @@ Both ML profiles run identical stages. Default difference: SigLIP resolution (22
 
 Optional: `MATCH_MODEL`, `SAFETY_MODEL`, `MODEL_PRECISION`, `BATCH_SIZE`, `TORCH_COMPILE`, `OPENVINO_DEVICE`.
 
+### Relevance & Safety Custom Overrides
+* `SAFETY_MODEL`: Override safety classifier (e.g. `AdamCodd/vit-base-nsfw-detector` for high sensitivity, `Falconsai/nsfw_image_detection` for speed, or `strangerguardhf/nsfw-image-detection` for multi-class).
+* `RELEVANCE_FORMULATION`: `unified_softmax` (default) or `baseline` (sigmoid margin blending).
+* `RELEVANCE_TEMP_SCALE`: Temperature scaling for unified softmax logits (default: `1.5`).
+* `RELEVANCE_THRESHOLD`: Decision gate for `petLikelihood` (default: `0.32` for `unified_softmax`, `0.30` for `baseline`).
+* `RELEVANCE_MARGIN_THRESHOLD`: Confidence margin between top-two classes before defaulting to `"other"` (default: `0.40` for `unified_softmax`, `0.75` for `baseline`).
+
 Full template: [`.env.example`](../.env.example).
 
 ---
@@ -105,11 +112,15 @@ Unknown values are normalized to `""` during validation. The hint affects releva
 
 ## Relevance scoring
 
-The relevance stage converts SigLIP zero-shot logits into `petLikelihood` (0–1) and `topLabel`.
+The relevance stage converts SigLIP zero-shot logits into `petLikelihood` (0–1) and `topLabel`. By default, it uses a **Unified Softmax** over all positive pet prompts and negative distractors to naturally suppress false positive scores for non-pet images.
 
-1. **Threshold 0.30** — binary pet vs non-pet gate (maximizes recall on eval set)
-2. **Margin fallback 0.75** — if top-two pet class logits differ by less than 0.75, label falls back to `"other"` (generic pet)
-3. **`petType` hint** — when provided and within margin of the top prediction, stabilizes `topLabel` to the hinted species; boosts likelihood toward that class
+1. **Unified Softmax (Default):** Runs softmax over concatenated pet + distractor prompt logits with a temperature scale `RELEVANCE_TEMP_SCALE=1.5`. The `petLikelihood` is the sum of all pet category probabilities.
+   - **Threshold:** `0.32` decision gate (above this is considered a pet).
+   - **Margin Fallback:** `0.40`. If the probability difference between the top-two species classes is less than `0.40`, the label falls back to `"other"` (generic pet).
+2. **Baseline Blending (Legacy):** Calculates binary margin score via sigmoid blending: `0.5 * _sigmoid(pet_max - neg_max) + 0.5 * _softmax_max(pet_logits)`.
+   - **Threshold:** `0.30` decision gate.
+   - **Margin Fallback:** `0.75`.
+3. **`petType` hint** — when provided and within margin of the top prediction, stabilizes `topLabel` to the hinted species; boosts likelihood toward that class.
 
 Hint-stabilized subclass accuracy on the 305-image eval: **51.0% → 77.1%** (standard profile). Reproduce: `python dev_benchmarks/simulate_hints.py`.
 

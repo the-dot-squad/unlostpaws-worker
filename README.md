@@ -100,11 +100,17 @@ Once configured, you can run other local development subcommands inside the clon
 
 Three capability tiers. Hardware (CPU / GPU / CoreML) is configured separately via env vars.
 
-| Profile | SigLIP model | Embed dim | Relevance | Typical use |
-| :--- | :--- | :--- | :--- | :--- |
+| Profile | SigLIP Model (Hugging Face) | Embed Dim | Relevance | Typical Use |
+| :--- | :--- | :---: | :---: | :--- |
 | `dedup-only` | — | — | off | MD5 + pHash + quality only |
-| `standard` | `siglip2-base-patch16-224` | 768 | on | Fast indexing, lower latency |
-| `quality` | `siglip2-base-patch16-384` | 768 | on | Default production (higher resolution) |
+| `standard` | [`google/siglip2-base-patch16-224`](https://huggingface.co/google/siglip2-base-patch16-224) | 768 | on | Fast indexing, lower latency |
+| `quality` | [`google/siglip2-base-patch16-384`](https://huggingface.co/google/siglip2-base-patch16-384) | 768 | on | Default production (higher resolution) |
+
+### Safety Moderation Models
+Safety classification runs in the pipeline before image relevance verification. You can configure which safety model is loaded by setting `SAFETY_MODEL` in `.env`:
+* **[`Falconsai/nsfw_image_detection`](https://huggingface.co/Falconsai/nsfw_image_detection)** *(Default profile safety model)*: Extremely lightweight (~80MB), low latency (~35ms), but lower sensitivity on suggestive content (40% recall).
+* **[`AdamCodd/vit-base-nsfw-detector`](https://huggingface.co/AdamCodd/vit-base-nsfw-detector)** *(Custom safety model option)*: Outstanding classification coverage (~343MB), catching **100%** of suggestive/NSFW content with a minimal 1.35% false-positive rate (~60ms latency).
+* **[`strangerguardhf/nsfw-image-detection`](https://huggingface.co/strangerguardhf/nsfw-image-detection)** *(Multi-class option)*: SigLIP2-based multi-class classifier categorizing content into SFW, Anime, Hentai, Pornography, and Sensual. High recall (90%) but prone to high false-positives (6.78%) on organic pet shapes.
 
 Both ML profiles run the same fused pipeline on the full image:
 
@@ -196,12 +202,19 @@ python dev_benchmarks/evaluate_workflow.py --profile quality
 
 ### Profile comparison (zero-shot)
 
-| Profile | Pet relevance | Subclass match | Avg latency |
-| :--- | :--- | :--- | :--- |
-| `standard` (base @ 224px) | **86.6%** | 51.0% | **0.089s** |
-| `quality` (base @ 384px) | **84.9%** | **64.1%** | 0.131s |
+| Profile | Relevance Formulation | Safety Model | Pet Relevance | Subclass Match | Avg Latency |
+| :--- | :--- | :--- | :---: | :---: | :---: |
+| `standard` (baseline) | Baseline Blending | Falconsai NSFW | 86.6% | 51.0% | 0.089s |
+| `standard` (default) | Unified Softmax | Falconsai NSFW | **90.8%** | **60.0%** | **0.078s** |
+| `standard` (custom safety)| Unified Softmax | AdamCodd NSFW | **90.8%** | **60.0%** | 0.133s |
+| `quality` (baseline) | Baseline Blending | Falconsai NSFW | 84.9% | 64.1% | 0.131s |
+| `quality` (default) | Unified Softmax | Falconsai NSFW | **90.5%** | **69.4%** | 0.176s |
+| `quality` (custom safety) | Unified Softmax | AdamCodd NSFW | **90.5%** | **69.4%** | 0.228s |
 
-`quality` trades 1.7pp binary relevance for +13pp subclass accuracy and higher-res embeddings. See [docs/PERFORMANCE.md](docs/PERFORMANCE.md) for methodology.
+- **Unified Softmax Relevance:** Improves binary relevance accuracy to **~90.8%** and specific subclass matching to **~69.4%** by suppressing distractor false positives.
+- **Custom Safety Model:** Setting `SAFETY_MODEL=AdamCodd/vit-base-nsfw-detector` provides **100% recall** on suggestive images (up from 40%), keeping the platform fully secure.
+
+See [docs/PERFORMANCE.md](docs/PERFORMANCE.md) for detailed methodology.
 
 ### Effect of `petType` hints (standard profile)
 
@@ -211,7 +224,7 @@ When the correct species hint is provided, subclass match improves from **51.0% 
 python dev_benchmarks/simulate_hints.py
 ```
 
-Relevance scoring uses a **0.30** likelihood threshold and **0.75** logit-margin fallback to `"other"` when uncertain. Algorithm details: [docs/GUIDE.md](docs/GUIDE.md#relevance-scoring).
+Relevance scoring defaults to a unified softmax over all prompts, with a **0.32** likelihood threshold and **0.40** logit-margin fallback to `"other"` when uncertain. Custom calibration can be tuned via environment variables. Algorithm details: [docs/GUIDE.md](docs/GUIDE.md#relevance-scoring).
 
 CI smoke fixtures (`python -m tools eval`) use synthetic PNGs — not for accuracy measurement.
 

@@ -71,7 +71,7 @@ def test_output_rounded_to_four_decimals():
 
 def test_prompt_constants_length():
     assert len(PROMPT_ENSEMBLES) == N_PET
-    assert len(NEGATIVE_PROMPTS) == 8
+    assert len(NEGATIVE_PROMPTS) == 11
     assert len(PET_KEYS) == N_PET
 
 

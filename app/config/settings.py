@@ -83,6 +83,10 @@ class Settings:
     model_cache_dir: str
     tensorrt_cache_dir: str
     openvino_device: str
+    relevance_formulation: Literal["baseline", "unified_softmax"]
+    relevance_temp_scale: float
+    relevance_threshold: float
+    relevance_margin_threshold: float
 
     @property
     def requires_cuda(self) -> bool:
@@ -162,6 +166,25 @@ def load_settings() -> Settings:
         "OPENVINO_DEVICE", "NPU" if execution_provider == "openvino" else "CPU"
     )
 
+    relevance_formulation = os.getenv("RELEVANCE_FORMULATION", "unified_softmax").strip().lower()
+    if relevance_formulation not in ("baseline", "unified_softmax"):
+        relevance_formulation = "unified_softmax"
+
+    relevance_temp_scale_raw = os.getenv("RELEVANCE_TEMP_SCALE", "").strip()
+    relevance_temp_scale = float(relevance_temp_scale_raw) if relevance_temp_scale_raw else 1.5
+
+    relevance_threshold_raw = os.getenv("RELEVANCE_THRESHOLD", "").strip()
+    if relevance_threshold_raw:
+        relevance_threshold = float(relevance_threshold_raw)
+    else:
+        relevance_threshold = 0.32 if relevance_formulation == "unified_softmax" else 0.30
+
+    relevance_margin_threshold_raw = os.getenv("RELEVANCE_MARGIN_THRESHOLD", "").strip()
+    if relevance_margin_threshold_raw:
+        relevance_margin_threshold = float(relevance_margin_threshold_raw)
+    else:
+        relevance_margin_threshold = 0.40 if relevance_formulation == "unified_softmax" else 0.75
+
     return Settings(
         worker_version=__version__,
         redis_url=os.getenv("REDIS_URL") or os.getenv("UPSTASH_REDIS_URL") or "",
@@ -191,6 +214,10 @@ def load_settings() -> Settings:
         model_cache_dir=os.getenv("MODEL_CACHE_DIR", f"{hf_home}/onnx"),
         tensorrt_cache_dir=os.getenv("TENSORRT_CACHE_DIR", f"{hf_home}/tensorrt"),
         openvino_device=openvino_device,
+        relevance_formulation=relevance_formulation,
+        relevance_temp_scale=relevance_temp_scale,
+        relevance_threshold=relevance_threshold,
+        relevance_margin_threshold=relevance_margin_threshold,
     )
 
 

@@ -14,12 +14,28 @@ python dev_benchmarks/evaluate_workflow.py --profile standard
 python dev_benchmarks/evaluate_workflow.py --profile quality
 ```
 
-| Profile | Match model | Embed dim | Pet relevance | Subclass match | Avg latency |
-|---------|-------------|-----------|---------------|----------------|-------------|
-| `standard` | base @ 224px | 768 | **86.6%** | 51.0% | **0.089s** |
-| `quality` | base @ 384px | 768 | **84.9%** | **64.1%** | 0.131s |
+| Profile | Relevance Formulation | Safety Model | Embed Dim | Pet Relevance | Subclass Match | Avg Latency |
+| :--- | :--- | :--- | :---: | :---: | :---: | :---: |
+| `standard` (baseline) | Baseline Blending | Falconsai NSFW | 768 | 86.6% | 51.0% | 0.089s |
+| `standard` (default) | Unified Softmax | Falconsai NSFW | 768 | **90.8%** | **60.0%** | **0.078s** |
+| `standard` (custom safety)| Unified Softmax | AdamCodd NSFW | 768 | **90.8%** | **60.0%** | 0.133s |
+| `quality` (baseline) | Baseline Blending | Falconsai NSFW | 768 | 84.9% | 64.1% | 0.131s |
+| `quality` (default) | Unified Softmax | Falconsai NSFW | 768 | **90.5%** | **69.4%** | 0.176s |
+| `quality` (custom safety) | Unified Softmax | AdamCodd NSFW | 768 | **90.5%** | **69.4%** | 0.228s |
 
-Reports: `dev_benchmarks/evaluation_report_{standard,quality}.md`.
+### Safety Moderation Models Comparison
+Evaluated on the 10 suggestive (unsafe) and 295 SFW (safe) images in the benchmark set:
+
+| Safety Model | Accuracy | Precision | Recall (Sensitivity) | F1 Score | Conf. Matrix (TP/FN/TN/FP) | Latency |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| **`Falconsai/nsfw_image_detection`** *(Default)* | 98.0% | **100.0%** | 40.0% | 57.1% | 4 / 6 / 295 / 0 | **~35ms** |
+| **`strangerguardhf/nsfw-image-detection`** | 93.1% | 31.0% | 90.0% | 46.2% | 9 / 1 / 275 / 20 | ~45ms |
+| **`AdamCodd/vit-base-nsfw-detector`** *(Custom)* | **98.7%** | 71.4% | **100.0%** | **83.3%** | **10 / 0 / 291 / 4** | ~60ms |
+
+- **Default Falconsai model** has very low recall (40%), missing 6 out of 10 suggestive images, presenting a safety risk.
+- **AdamCodd model** achieves **100% recall** (0 suggestive images missed) with a minimal false positive rate of **1.35%** (only 4 false flags). It is highly recommended for production security.
+
+Reports: `dev_benchmarks/evaluation_report_{standard,quality}_default.md` and `_safety.md`.
 
 ### Hint-stabilized subclass (standard profile)
 

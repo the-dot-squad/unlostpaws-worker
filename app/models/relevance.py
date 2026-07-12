@@ -73,6 +73,9 @@ NEGATIVE_PROMPTS: list[str] = [
     "a photo of food, drinks, or kitchen items",
     "a photo of furniture, house interior, or building",
     "a photo of a tree, plant, flower, or forest without animals",
+    "a photo of a human, person, face, or selfie without pets",
+    "a screenshot of a phone screen, app UI, text message, or document",
+    "a cartoon, drawing, illustration, or graphic without real animals",
 ]
 
 
@@ -91,23 +94,35 @@ def compute_relevance_from_logits(
     logits: np.ndarray,
     pet_type: str = "",
     pet_keys: list[str] | None = None,
+    formulation: str | None = None,
+    temp_scale: float | None = None,
+    margin_threshold: float | None = None,
 ) -> RelevancePrediction:
     """
     Convert a vector of per-prompt logits into a relevance score and label.
 
     When ``pet_type`` is set (e.g. ``"dog"`` from the job payload), it:
     - boosts the likelihood score toward that class when computing margin vs distractors
-    - resolves ``topLabel`` to the hint when logit margin between top pet classes is < 0.75
+    - resolves ``topLabel`` to the hint when logit margin between top pet classes is < margin_threshold
     - does not override the label when the hint contradicts a strong model signal
 
     Args:
         logits: 1-D array containing the raw similarity logits for the ensembled prompts.
         pet_type: Optional requested pet class to bias label selection.
         pet_keys: Ordered pet label keys.
+        formulation: Optional formulation override ("baseline" or "unified_softmax").
+        temp_scale: Optional temperature scaling override.
+        margin_threshold: Optional specific label decision margin threshold override.
 
     Returns:
         RelevancePrediction with rounded pet_likelihood and resolved top_label.
     """
+    from app.config.settings import settings
+
+    use_formulation = formulation or settings.relevance_formulation
+    use_temp = temp_scale if temp_scale is not None else settings.relevance_temp_scale
+    use_margin = margin_threshold if margin_threshold is not None else settings.relevance_margin_threshold
+
     keys = pet_keys or PET_KEYS
 
     # Map the individual prompt logits back to their categories and average them
@@ -126,15 +141,24 @@ def compute_relevance_from_logits(
     pet_max = float(np.max(pet_logits))
     neg_max = float(np.max(neg_logits))
 
-    compare_logit = pet_max
-    if pet_type and pet_type in keys:
-        typed_idx = keys.index(pet_type)
-        compare_logit = max(pet_max, float(pet_logits[typed_idx]))
+    if use_formulation == "unified_softmax":
+        # Concatenate averaged pet logits and individual negative logits
+        combined = np.concatenate([pet_logits, neg_logits]) / use_temp
+        # Shift for numerical stability in softmax
+        shifted = combined - np.max(combined)
+        exp_vals = np.exp(shifted)
+        probs = exp_vals / np.sum(exp_vals)
+        likelihood = float(np.sum(probs[0 : len(keys)]))
+    else:
+        # Baseline margin-based sigmoid blending formulation
+        compare_logit = pet_max
+        if pet_type and pet_type in keys:
+            typed_idx = keys.index(pet_type)
+            compare_logit = max(pet_max, float(pet_logits[typed_idx]))
 
-    margin_score = _sigmoid(compare_logit - neg_max)
-    pet_confidence = _softmax_max(pet_logits)
-
-    likelihood = 0.5 * margin_score + 0.5 * pet_confidence
+        margin_score = _sigmoid(compare_logit - neg_max)
+        pet_confidence = _softmax_max(pet_logits)
+        likelihood = 0.5 * margin_score + 0.5 * pet_confidence
 
     # Safe fine-grained fallback: if the model is uncertain between top pet categories,
     # default to "other" (generic pet) unless the user provided a stabilizing pet_type hint.
@@ -142,14 +166,14 @@ def compute_relevance_from_logits(
     top1 = sorted_pet_logits[-1]
     top2 = sorted_pet_logits[-2]
 
-    if (top1 - top2) < 0.75:
+    if (top1 - top2) < use_margin:
         top_label = "other"
     else:
         top_label = keys[best_pet_idx]
 
     if pet_type and pet_type in keys:
         typed_idx = keys.index(pet_type)
-        if pet_logits[typed_idx] >= (top1 - 0.75):
+        if pet_logits[typed_idx] >= (top1 - use_margin):
             top_label = pet_type
 
     return RelevancePrediction(
