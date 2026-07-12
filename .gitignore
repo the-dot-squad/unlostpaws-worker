@@ -22,3 +22,6 @@ venv.bak/
 .vscode/
 .idea/
 .DS_Store
+
+# Local dev benchmarking & test images
+dev_benchmarks/

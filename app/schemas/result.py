@@ -71,7 +71,7 @@ class ProcessedImageResult(BaseModel):
     # Perceptual hash string of the visual contents (near-duplicate tracking)
     phash: str = ""
 
-    # 768-dimensional float vector embedding representing the visual features
+    # SigLIP embedding vector (768-d for standard and quality profiles)
     embedding: list[float] = Field(default_factory=list)
 
     # NSFW classification details if the safety stage was executed

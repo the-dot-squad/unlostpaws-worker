@@ -3,7 +3,7 @@
 # ==============================================================================
 # Python 3.12 slim + PyTorch (CPU) + ONNX Runtime (CPU) + Hugging Face Transformers.
 #
-# Default VISION_PROFILE=cpu-quality (full pipeline on CPU).
+# Default VISION_PROFILE=quality (full pipeline on CPU).
 # Use with: docker compose up -d  (see docker-compose.yml)
 #
 # For NVIDIA GPU use Dockerfile.gpu and docker-compose.gpu.yml instead.
@@ -28,9 +28,9 @@ USER appuser
 
 # Hugging Face model download cache.
 ENV HF_HOME=/app/.cache/huggingface
-# ONNX artifact cache (used when VISION_PROFILE starts with onnx-).
+# ONNX artifact cache (used when INFERENCE_RUNTIME=onnx).
 ENV MODEL_CACHE_DIR=/app/.cache/huggingface/onnx
-ENV VISION_PROFILE=cpu-quality
+ENV VISION_PROFILE=quality
 ENV WORKER_IMAGE_VARIANT=cpu
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1

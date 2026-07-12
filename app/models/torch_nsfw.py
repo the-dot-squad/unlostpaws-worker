@@ -44,7 +44,9 @@ class TorchNsfwClassifier:
             self.device,
             self.torch_compile,
         )
-        self._processor = AutoImageProcessor.from_pretrained(self.model_id)
+        self._processor = AutoImageProcessor.from_pretrained(
+            self.model_id, use_fast=False
+        )
         self._model = AutoModelForImageClassification.from_pretrained(self.model_id)
         self._model.to(self.device)
         self._model.eval()

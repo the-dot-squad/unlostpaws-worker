@@ -40,6 +40,24 @@ from app.utils.url import rewrite_local_url
         ),
         ("http://localhost:3000/api", False, "false", "http://localhost:3000/api"),
         ("http://example.com/api", True, "true", "http://example.com/api"),
+        (
+            "http://example.com/api?debug=localhost",
+            True,
+            "true",
+            "http://example.com/api?debug=localhost",
+        ),
+        (
+            "http://example.com/localhost/api",
+            True,
+            "true",
+            "http://example.com/localhost/api",
+        ),
+        (
+            "http://example.com/api?ip=127.0.0.1",
+            True,
+            "true",
+            "http://example.com/api?ip=127.0.0.1",
+        ),
     ],
 )
 def test_rewrite_local_url(url, in_docker, env_var, expected):

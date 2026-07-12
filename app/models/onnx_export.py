@@ -35,7 +35,7 @@ def _export_siglip_image_classifier(model_id: str, output_dir: Path) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     model = AutoModelForImageClassification.from_pretrained(model_id)
     model.eval()
-    processor = AutoImageProcessor.from_pretrained(model_id)
+    processor = AutoImageProcessor.from_pretrained(model_id, use_fast=False)
     processor.save_pretrained(output_dir)
     model.config.save_pretrained(output_dir)
 
@@ -92,11 +92,19 @@ def export_model_to_onnx(model_id: str, task: str, output_dir: Path) -> None:
     if task == "zero-shot-image-classification":
         from transformers import AutoImageProcessor, AutoTokenizer
 
-        AutoImageProcessor.from_pretrained(model_id).save_pretrained(output_dir)
+        AutoImageProcessor.from_pretrained(model_id, use_fast=False).save_pretrained(
+            output_dir
+        )
         AutoTokenizer.from_pretrained(model_id).save_pretrained(output_dir)
     elif task == "image-classification":
         from transformers import AutoImageProcessor
 
-        AutoImageProcessor.from_pretrained(model_id).save_pretrained(output_dir)
+        AutoImageProcessor.from_pretrained(model_id, use_fast=False).save_pretrained(
+            output_dir
+        )
+    elif task == "object-detection":
+        from transformers import DetrImageProcessor
+
+        DetrImageProcessor.from_pretrained(model_id).save_pretrained(output_dir)
     else:
         raise ValueError(f"Unsupported ONNX export task: {task}")

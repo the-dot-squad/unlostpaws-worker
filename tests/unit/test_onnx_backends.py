@@ -19,7 +19,11 @@ def _mock_session(input_names, output_map):
         handler = output_map[output_name]
         return handler(feeds)
 
+    def run(feeds):
+        return {name: handler(feeds) for name, handler in output_map.items()}
+
     session.run_output = run_output
+    session.run = run
     return session
 
 
@@ -81,20 +85,36 @@ def test_onnx_siglip_relevance_batch(
 
     tokenizer = MagicMock()
     tokenizer.return_value = {
-        "input_ids": np.zeros((12, 8), dtype=np.int64),
-        "attention_mask": np.ones((12, 8), dtype=np.int64),
+        "input_ids": np.zeros((29, 8), dtype=np.int64),
+        "attention_mask": np.ones((29, 8), dtype=np.int64),
     }
     mock_tok.from_pretrained.return_value = tokenizer
 
     def logits_per_image(_feeds):
-        return np.array(
-            [[5.0, 1.0, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, -1.0, -2.0, -3.0]],
-            dtype=np.float32,
+        # 21 ensembled pet logits (dog=5.0, cat=1.0, others=0.5) + 8 negative logits
+        pet_part = (
+            [5.0] * 3
+            + [1.0] * 3
+            + [0.5] * 2
+            + [0.5] * 2
+            + [0.5] * 2
+            + [0.5] * 2
+            + [0.5] * 2
+            + [0.5] * 2
+            + [0.5] * 3
         )
+        neg_part = [-1.0, -2.0, -3.0, -5.0, -5.0, -5.0, -5.0, -5.0]
+        return np.array([pet_part + neg_part], dtype=np.float32)
+
+    def image_embeds(_feeds):
+        return np.random.randn(1, 768).astype(np.float32)
 
     mock_session_cls.return_value = _mock_session(
         ["pixel_values", "input_ids", "attention_mask"],
-        {"logits_per_image": logits_per_image},
+        {
+            "logits_per_image": logits_per_image,
+            "image_embeds": image_embeds,
+        },
     )
 
     embedder = OnnxSiglipEmbedder("google/siglip2-base-patch16-224", 1)

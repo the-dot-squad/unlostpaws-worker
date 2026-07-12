@@ -14,14 +14,21 @@ from app.models.torch_siglip import TorchSiglipEmbedder
 
 @pytest.fixture
 def torch_quality_env(monkeypatch):
-    monkeypatch.setenv("VISION_PROFILE", "cpu-quality")
+    monkeypatch.setenv("VISION_PROFILE", "quality")
+    monkeypatch.setenv("INFERENCE_RUNTIME", "torch")
+    return load_settings()
+
+
+@pytest.fixture
+def torch_standard_env(monkeypatch):
+    monkeypatch.setenv("VISION_PROFILE", "standard")
     monkeypatch.setenv("INFERENCE_RUNTIME", "torch")
     return load_settings()
 
 
 @pytest.fixture
 def onnx_quality_env(monkeypatch):
-    monkeypatch.setenv("VISION_PROFILE", "onnx-cpu-quality")
+    monkeypatch.setenv("VISION_PROFILE", "quality")
     monkeypatch.setenv("INFERENCE_RUNTIME", "onnx")
     return load_settings()
 
@@ -56,7 +63,7 @@ def test_embedder_none_when_disabled(monkeypatch):
 
 
 def test_runtime_override(monkeypatch):
-    monkeypatch.setenv("VISION_PROFILE", "cpu-quality")
+    monkeypatch.setenv("VISION_PROFILE", "quality")
     monkeypatch.setenv("INFERENCE_RUNTIME", "onnx")
     cfg = load_settings()
     assert cfg.runtime == "onnx"
@@ -67,6 +74,11 @@ def test_default_hf_home_local(monkeypatch):
     monkeypatch.setenv("RUNNING_IN_DOCKER", "false")
     monkeypatch.setattr(Path, "exists", lambda self: False)
     assert _default_hf_home() == str(Path.home() / ".cache" / "huggingface")
+
+
+def test_standard_has_relevance_enabled(torch_standard_env):
+    assert torch_standard_env.relevance_enabled is True
+    assert torch_standard_env.match_model == "google/siglip2-base-patch16-224"
 
 
 def test_default_hf_home_docker(monkeypatch):

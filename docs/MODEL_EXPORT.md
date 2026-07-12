@@ -26,7 +26,8 @@ This exports:
 
 | Model | Task | Output folder |
 |---|---|---|
-| `google/siglip2-base-patch16-224` | zero-shot-image-classification | `output/onnx/siglip2/` |
+| `google/siglip2-base-patch16-224` | zero-shot-image-classification | `output/onnx/siglip2-base/` |
+| `google/siglip2-base-patch16-384` | zero-shot-image-classification | `output/onnx/siglip2-quality/` |
 | `Falconsai/nsfw_image_detection` | image-classification | `output/onnx/nsfw-falconsai/` |
 | `strangerguardhf/nsfw-image-detection` | image-classification | `output/onnx/nsfw-strangerguard/` |
 

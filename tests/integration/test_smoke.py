@@ -21,7 +21,7 @@ from tools.smoke import run_smoke
     "profile",
     [
         "dedup-only",
-        "cpu-quality",
+        "quality",
     ],
 )
 def test_profile_smoke(profile: str) -> None:

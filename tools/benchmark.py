@@ -16,11 +16,9 @@ from tools._console import out
 from tools._paths import ROOT, ensure_import_path
 
 DEFAULT_PROFILES = [
-    "cpu-quality",
-    "cpu-light",
-    "cpu-standard",
-    "onnx-cpu-quality",
-    "onnx-apple",
+    "quality",
+    "standard",
+    "dedup-only",
 ]
 
 
@@ -62,39 +60,33 @@ async def benchmark_profile(
     reload(settings_mod)
     reload(registry_mod)
 
-    from app.config.profiles import get_preset
     from app.config.settings import load_settings
     from app.models.registry import warmup
-    from app.pipeline.stages.embed import embed_stage
-    from app.pipeline.stages.relevance import relevance_stage
+    from app.pipeline.stages.match import match_stage
     from app.pipeline.stages.safety import safety_stage
 
-    preset = get_preset(profile)
     cfg = load_settings()
     images = load_images(images_dir)
 
     await warmup(cfg)
 
-    stages: dict[str, list[float]] = {"safety": [], "embed": [], "relevance": []}
+    stages: dict[str, list[float]] = {"safety": [], "match": []}
     for _ in range(runs):
         if cfg.safety_enabled:
             t0 = time.perf_counter()
             await safety_stage(images, cfg)
             stages["safety"].append(time.perf_counter() - t0)
-        if cfg.embed_enabled:
-            t0 = time.perf_counter()
-            await embed_stage(images, cfg)
-            stages["embed"].append(time.perf_counter() - t0)
-        if cfg.relevance_enabled:
-            t0 = time.perf_counter()
-            await relevance_stage(images, "dog", cfg)
-            stages["relevance"].append(time.perf_counter() - t0)
+
+        t0 = time.perf_counter()
+        await match_stage(images, "dog", cfg)
+        stages["match"].append(time.perf_counter() - t0)
 
     return {
         "profile": profile,
-        "runtime": preset.runtime,
-        "execution_provider": preset.execution_provider,
-        "precision": preset.precision,
+        "runtime": cfg.runtime,
+        "execution_provider": cfg.execution_provider,
+        "device": cfg.device,
+        "precision": cfg.precision,
         "images": len(images),
         "runs": runs,
         "stages": {name: _stage_stats(vals) for name, vals in stages.items() if vals},
@@ -104,13 +96,14 @@ async def benchmark_profile(
 def print_benchmark(result: dict) -> None:
     out(
         f"\nProfile: {result['profile']} "
-        f"(runtime={result['runtime']}, ep={result['execution_provider']})"
+        f"(runtime={result['runtime']}, ep={result['execution_provider']}, "
+        f"device={result.get('device', 'n/a')})"
     )
     out(f"Images: {result['images']}  Runs: {result['runs']}")
     for stage, stats in result.get("stages", {}).items():
         if stats:
             out(
-                f"  {stage:10s}  p50={stats['p50_ms']:7.1f}ms  "
+                f"  {stage:16s}  p50={stats['p50_ms']:7.1f}ms  "
                 f"p95={stats['p95_ms']:7.1f}ms"
             )
 

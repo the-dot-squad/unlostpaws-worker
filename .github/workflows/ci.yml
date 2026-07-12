@@ -167,7 +167,8 @@ jobs:
             docker run -d --gpus all \
               --name unlostpaws-worker \
               --env-file .env \
-              -e VISION_PROFILE=gpu-standard \
+              -e VISION_PROFILE=quality \
+              -e DEVICE=cuda \
               -e DEVICE=cuda \
               -v unlostpaws-hf-cache:/app/.cache/huggingface \
               ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}-gpu

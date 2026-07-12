@@ -3,7 +3,7 @@
 # ==============================================================================
 # CUDA 12.6 runtime + PyTorch (CUDA 12.4 wheels) + ONNX Runtime GPU + Transformers.
 #
-# Default VISION_PROFILE=gpu-standard (torch + CUDA, torch.compile enabled).
+# Default VISION_PROFILE=quality (torch + CUDA).
 # Use with: docker compose -f docker-compose.gpu.yml up -d
 #
 # Requires NVIDIA Container Toolkit on the host. Do not use this image on CPU-only VMs.
@@ -39,7 +39,7 @@ USER appuser
 ENV HF_HOME=/app/.cache/huggingface
 ENV MODEL_CACHE_DIR=/app/.cache/huggingface/onnx
 ENV TENSORRT_CACHE_DIR=/app/.cache/tensorrt
-ENV VISION_PROFILE=gpu-standard
+ENV VISION_PROFILE=quality
 ENV WORKER_IMAGE_VARIANT=gpu
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1

@@ -7,7 +7,9 @@ with a clear error instead of crashing mid-pipeline.
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
+
+from app.models.relevance import PET_KEYS
 
 JobType = Literal["listing", "owned-pet", "search"]
 
@@ -22,9 +24,25 @@ class JobPayload(BaseModel):
     imageUrls: list[str] = Field(min_length=1)
     webhookUrl: str | None = None
     listingType: str = ""
-    petType: str = ""
+    petType: str = Field(
+        default="",
+        description=(
+            "Optional species hint from the listing (dog, cat, bird, etc.). "
+            "Empty string = zero-shot. Unknown values are ignored."
+        ),
+    )
     attempt: int = 0
     pipeline: list[str] | None = None
+
+    @field_validator("petType")
+    @classmethod
+    def normalize_pet_type(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if not normalized:
+            return ""
+        if normalized not in PET_KEYS:
+            return ""
+        return normalized
 
 
 def parse_job(raw: dict) -> JobPayload:

@@ -2,27 +2,21 @@
 
 from __future__ import annotations
 
-import os
 from unittest.mock import patch
 
 import pytest
 
-from app.config.profiles import get_preset
 from app.config.runtime_validation import (
     HardwareInfo,
     RuntimeValidationError,
     detect_hardware,
+    recommend_config,
     recommend_profile,
     validate_runtime,
 )
-from app.config.settings import Settings, load_settings
+from app.config.settings import load_settings
 from app.models.execution_providers import CPU_EP, CUDA_EP, OPENVINO_EP
 from app.models.factory import resolve_torch_device
-
-
-def _settings(profile: str) -> Settings:
-    os.environ["VISION_PROFILE"] = profile
-    return load_settings()
 
 
 def _hardware(
@@ -44,39 +38,47 @@ def _hardware(
     )
 
 
-def test_gpu_profile_fails_without_cuda(monkeypatch):
-    monkeypatch.setenv("VISION_PROFILE", "gpu-standard")
+def test_torch_cuda_fails_without_cuda(monkeypatch):
+    monkeypatch.setenv("VISION_PROFILE", "quality")
+    monkeypatch.setenv("INFERENCE_RUNTIME", "torch")
+    monkeypatch.setenv("DEVICE", "cuda")
     cfg = load_settings()
     hw = _hardware(cuda_available=False, image_variant="gpu")
-    with pytest.raises(RuntimeValidationError, match="requires CUDA"):
+    with pytest.raises(RuntimeValidationError, match="torch.cuda.is_available"):
         validate_runtime(cfg, hw, phase="preflight")
 
 
-def test_cpu_profile_passes_without_cuda(monkeypatch):
-    monkeypatch.setenv("VISION_PROFILE", "cpu-quality")
+def test_cpu_torch_passes_without_cuda(monkeypatch):
+    monkeypatch.setenv("VISION_PROFILE", "quality")
+    monkeypatch.setenv("DEVICE", "cpu")
     cfg = load_settings()
     hw = _hardware(cuda_available=False, image_variant="cpu")
     validate_runtime(cfg, hw, phase="preflight")
 
 
 def test_image_variant_mismatch(monkeypatch):
-    monkeypatch.setenv("VISION_PROFILE", "gpu-standard")
+    monkeypatch.setenv("VISION_PROFILE", "quality")
+    monkeypatch.setenv("DEVICE", "cuda")
     cfg = load_settings()
     hw = _hardware(cuda_available=True, image_variant="cpu")
     with pytest.raises(RuntimeValidationError, match="WORKER_IMAGE_VARIANT=cpu"):
         validate_runtime(cfg, hw, phase="preflight")
 
 
-def test_onnx_gpu_fails_without_cuda_ep(monkeypatch):
-    monkeypatch.setenv("VISION_PROFILE", "onnx-gpu-standard")
+def test_onnx_cuda_fails_without_cuda(monkeypatch):
+    monkeypatch.setenv("VISION_PROFILE", "standard")
+    monkeypatch.setenv("INFERENCE_RUNTIME", "onnx")
+    monkeypatch.setenv("ORT_EXECUTION_PROVIDER", "cuda")
     cfg = load_settings()
-    hw = _hardware(image_variant="gpu", ort_providers=(CPU_EP,))
-    with pytest.raises(RuntimeValidationError, match="CUDAExecutionProvider"):
+    hw = _hardware(image_variant="gpu", cuda_available=False, ort_providers=(CPU_EP,))
+    with pytest.raises(RuntimeValidationError, match="requires CUDA"):
         validate_runtime(cfg, hw, phase="preflight")
 
 
-def test_onnx_trt_fails_without_trt_ep(monkeypatch):
-    monkeypatch.setenv("VISION_PROFILE", "onnx-trt-standard")
+def test_onnx_tensorrt_fails_without_trt_ep(monkeypatch):
+    monkeypatch.setenv("VISION_PROFILE", "quality")
+    monkeypatch.setenv("INFERENCE_RUNTIME", "onnx")
+    monkeypatch.setenv("ORT_EXECUTION_PROVIDER", "tensorrt")
     cfg = load_settings()
     hw = _hardware(
         image_variant="gpu",
@@ -87,40 +89,44 @@ def test_onnx_trt_fails_without_trt_ep(monkeypatch):
         validate_runtime(cfg, hw, phase="preflight")
 
 
-def test_onnx_apple_fails_in_linux_docker(monkeypatch):
-    monkeypatch.setenv("VISION_PROFILE", "onnx-apple")
+def test_coreml_fails_in_linux_docker(monkeypatch):
+    monkeypatch.setenv("VISION_PROFILE", "quality")
+    monkeypatch.setenv("INFERENCE_RUNTIME", "onnx")
+    monkeypatch.setenv("ORT_EXECUTION_PROVIDER", "coreml")
     cfg = load_settings()
     hw = _hardware(is_docker=True, platform_system="Linux", ort_providers=(CPU_EP,))
     with pytest.raises(RuntimeValidationError, match="CoreML"):
         validate_runtime(cfg, hw, phase="preflight")
 
 
-def test_recommend_profile_arm64():
+def test_recommend_config_arm64():
     hw = _hardware(arch="aarch64", ort_providers=(CPU_EP,))
-    profile, _, _ = recommend_profile(hw)
-    assert profile == "onnx-cpu-quality"
+    cfg = recommend_config(hw)
+    assert cfg.vision_profile == "quality"
+    assert cfg.inference_runtime == "onnx"
 
 
 def test_recommend_profile_default_cpu():
     hw = _hardware(arch="x86_64", ort_providers=(CPU_EP,))
     profile, run_hint, _ = recommend_profile(hw)
-    assert profile == "cpu-quality"
+    assert profile == "quality"
     assert "docker compose up" in run_hint
 
 
-def test_recommend_profile_gpu_image_with_cuda():
+def test_recommend_config_gpu_image_with_cuda():
     hw = _hardware(
         image_variant="gpu", cuda_available=True, ort_providers=(CUDA_EP, CPU_EP)
     )
-    profile, run_hint, _ = recommend_profile(hw)
-    assert profile == "gpu-standard"
-    assert "docker-compose.gpu.yml" in run_hint
+    cfg = recommend_config(hw)
+    assert cfg.vision_profile == "quality"
+    assert cfg.device == "cuda"
+    assert "docker-compose.gpu.yml" in cfg.run_hint
 
 
-def test_recommend_profile_openvino():
+def test_recommend_config_openvino():
     hw = _hardware(ort_providers=(OPENVINO_EP, CPU_EP))
-    profile, _, _ = recommend_profile(hw)
-    assert profile == "onnx-intel"
+    cfg = recommend_config(hw)
+    assert cfg.execution_provider == "openvino"
 
 
 def test_resolve_torch_device_strict_raises():
@@ -145,11 +151,15 @@ def test_resolve_torch_device_cuda_when_available():
     assert resolve_torch_device("cuda") == "cuda"
 
 
-def test_requires_cuda_property():
-    assert get_preset("gpu-standard").requires_cuda is True
-    assert get_preset("onnx-trt-standard").requires_cuda is True
-    assert get_preset("cpu-quality").requires_cuda is False
-    assert get_preset("onnx-cpu-quality").requires_cuda is False
+def test_requires_cuda_from_settings(monkeypatch):
+    monkeypatch.setenv("VISION_PROFILE", "quality")
+    monkeypatch.setenv("DEVICE", "cuda")
+    cfg = load_settings()
+    assert cfg.requires_cuda is True
+
+    monkeypatch.setenv("DEVICE", "cpu")
+    cfg = load_settings()
+    assert cfg.requires_cuda is False
 
 
 def test_dedup_only_skips_validation(monkeypatch):
@@ -160,7 +170,7 @@ def test_dedup_only_skips_validation(monkeypatch):
 
 
 def test_post_warmup_fails_when_models_not_loaded(monkeypatch):
-    monkeypatch.setenv("VISION_PROFILE", "cpu-quality")
+    monkeypatch.setenv("VISION_PROFILE", "quality")
     cfg = load_settings()
     hw = _hardware(image_variant="cpu")
 

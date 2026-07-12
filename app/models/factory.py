@@ -35,10 +35,8 @@ def resolve_torch_device(preferred: str) -> str:
     return "cpu"
 
 
-def _openvino_device_for_profile(profile_name: str) -> str:
-    if profile_name == "onnx-intel":
-        return "NPU"
-    return "CPU"
+def _openvino_device_for_settings(cfg: Settings) -> str:
+    return cfg.openvino_device
 
 
 def create_embedder(cfg: Settings = settings) -> EmbedderBackend | None:
@@ -53,7 +51,7 @@ def create_embedder(cfg: Settings = settings) -> EmbedderBackend | None:
             execution_provider=cfg.execution_provider,
             model_cache_dir=cfg.model_cache_dir,
             tensorrt_cache_dir=cfg.tensorrt_cache_dir,
-            openvino_device=_openvino_device_for_profile(cfg.profile.name),
+            openvino_device=_openvino_device_for_settings(cfg),
         )
 
     return TorchSiglipEmbedder(
@@ -75,7 +73,7 @@ def create_classifier(cfg: Settings = settings) -> ClassifierBackend | None:
             execution_provider=cfg.execution_provider,
             model_cache_dir=cfg.model_cache_dir,
             tensorrt_cache_dir=cfg.tensorrt_cache_dir,
-            openvino_device=_openvino_device_for_profile(cfg.profile.name),
+            openvino_device=_openvino_device_for_settings(cfg),
         )
 
     return TorchNsfwClassifier(

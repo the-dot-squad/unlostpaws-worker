@@ -1,10 +1,9 @@
 """
 Pipeline Orchestrator — downloads images once, then coordinates execution stages.
 
-This module acts as the pipeline coordinator. It manages job steps in a specific
-moderation-first sequence to protect computational resources (e.g., CPU/GPU memory):
-  Phase 1. Moderation Signals (resolution, blur, NSFW)
-  Phase 2. Deduplication Fingerprinting & Matching (MD5, pHash, embeddings, relevance)
+Moderation-first sequence:
+  Phase 1. Moderation (quality, safety on originals)
+  Phase 2. Fingerprint + fused match (embed + relevance on full-frame image)
 """
 
 import asyncio
@@ -16,9 +15,8 @@ from app.config.settings import Settings, settings
 from app.models.registry import health_models, run_in_executor
 from app.pipeline.download import DecodedImage, download_all
 from app.pipeline.quality import assess_quality
-from app.pipeline.stages.embed import embed_stage
 from app.pipeline.stages.fingerprint import fingerprint_image
-from app.pipeline.stages.relevance import relevance_stage
+from app.pipeline.stages.match import MatchStageResult, match_stage
 from app.pipeline.stages.safety import safety_stage
 from app.schemas.result import (
     CallbackPayload,
@@ -32,11 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 def resolve_stages(job: dict, cfg: Settings) -> tuple[str, ...]:
-    """
-    Decides which execution stages to execute.
-    If the job payload has a custom "pipeline" override array (e.g., ["quality"]),
-    we use that; otherwise, we default to the active profile's stages.
-    """
+    """Use job pipeline override or default profile stages."""
     override = job.get("pipeline")
     if override:
         return tuple(override)
@@ -44,26 +38,16 @@ def resolve_stages(job: dict, cfg: Settings) -> tuple[str, ...]:
 
 
 def _run_fingerprint(decoded: list[DecodedImage]) -> list[tuple[str, str]]:
-    """
-    Utility helper to compute MD5 and pHash. Run in background executors.
-    """
     return [fingerprint_image(d.raw_bytes, d.image) for d in decoded]
 
 
 def _run_quality(decoded: list[DecodedImage]) -> list[QualityResult]:
-    """
-    Utility helper to run image resolution and blur checks. Run in background executors.
-    """
     return [QualityResult(**assess_quality(d.image)) for d in decoded]
 
 
 async def _run_stage_batch(
     stage_tasks: dict[str, Any],
 ) -> dict[str, Any]:
-    """
-    Utility that maps and awaits multiple asynchronous tasks concurrently.
-    Matches the results dictionary back to their original stage keys.
-    """
     if not stage_tasks:
         return {}
     keys = list(stage_tasks.keys())
@@ -72,15 +56,12 @@ async def _run_stage_batch(
 
 
 async def run_pipeline(job: dict, cfg: Settings = settings) -> JobResult:
-    """
-    Main pipeline executor. Downloads URLs, coordinates phases, and builds results.
-    """
+    """Main pipeline executor."""
     job_type = job.get("jobType", "listing")
     image_urls = job.get("imageUrls", [])
-    pet_type = job.get("petType", "")
+    pet_type = job.get("petType", "")  # optional species hint; empty = zero-shot
     stages = resolve_stages(job, cfg)
 
-    # 1. Image Download Phase
     t0 = time.perf_counter()
     decoded, errors = await download_all(image_urls)
     logger.info(
@@ -91,7 +72,6 @@ async def run_pipeline(job: dict, cfg: Settings = settings) -> JobResult:
         stages,
     )
 
-    # Instantiate the JobResult accumulator container
     result = JobResult(
         job_type=job_type,
         listing_id=job.get("listingId"),
@@ -100,7 +80,6 @@ async def run_pipeline(job: dict, cfg: Settings = settings) -> JobResult:
         errors=[ImageError(**e) for e in errors],
     )
 
-    # If no images downloaded successfully, return early
     if not decoded:
         return result
 
@@ -109,49 +88,43 @@ async def run_pipeline(job: dict, cfg: Settings = settings) -> JobResult:
 
     moderation_tasks: dict[str, Any] = {}
     if "quality" in stages:
-        # Offload OpenCV Laplacian calculations to ThreadPoolExecutor
         moderation_tasks["quality"] = run_in_executor(_run_quality, decoded)
     if "safety" in stages and cfg.safety_enabled:
-        # Launch safety model classifier tasks
         moderation_tasks["safety"] = safety_stage(pil_images, cfg)
 
-    # Await Phase 1 completion and update results store
     stage_results.update(await _run_stage_batch(moderation_tasks))
 
     matching_tasks: dict[str, Any] = {}
     if "fingerprint" in stages:
-        # Offload hashing calculations to ThreadPoolExecutor
         matching_tasks["fingerprint"] = run_in_executor(_run_fingerprint, decoded)
     if "embed" in stages and cfg.embed_enabled:
-        matching_tasks["embed"] = embed_stage(pil_images, cfg)
-    if "relevance" in stages and cfg.relevance_enabled and cfg.embed_enabled:
-        matching_tasks["relevance"] = relevance_stage(pil_images, pet_type, cfg)
+        matching_tasks["match"] = match_stage(pil_images, pet_type, cfg)
 
-    # Await Phase 2 completion
     stage_results.update(await _run_stage_batch(matching_tasks))
 
     fingerprints = stage_results.get("fingerprint", [("", "")] * len(decoded))
     qualities = stage_results.get("quality", [None] * len(decoded))
     safeties = stage_results.get("safety", [None] * len(decoded))
-    embeddings = stage_results.get("embed", [[] for _ in decoded])
-    relevances = stage_results.get("relevance", [None] * len(decoded))
+    matches: list[MatchStageResult] = stage_results.get(
+        "match", [MatchStageResult(embedding=[]) for _ in decoded]
+    )
 
     for i, item in enumerate(decoded):
         md5, phash = fingerprints[i] if i < len(fingerprints) else ("", "")
+        match = matches[i] if i < len(matches) else MatchStageResult(embedding=[])
         img_result = ProcessedImageResult(
             url=item.url,
             s3Key=item.url,
             md5=md5,
             phash=phash,
-            embedding=embeddings[i] if i < len(embeddings) else [],
+            embedding=match.embedding,
         )
-        # Verify lists indices before appending optional stage results
         if i < len(qualities) and qualities[i]:
             img_result.quality = qualities[i]
         if i < len(safeties) and safeties[i]:
             img_result.safety = safeties[i]
-        if i < len(relevances) and relevances[i]:
-            img_result.relevance = relevances[i]
+        if match.relevance:
+            img_result.relevance = match.relevance
         result.images.append(img_result)
 
     logger.info(
@@ -166,9 +139,7 @@ async def run_pipeline(job: dict, cfg: Settings = settings) -> JobResult:
 def build_callback_payload(
     result: JobResult, cfg: Settings = settings
 ) -> CallbackPayload:
-    """
-    Serializes internal job result models into the POST payload expected by Next.js API.
-    """
+    """Serialize job results for the Next.js callback API."""
     images_out = []
     for img in result.images:
         row: dict = {
@@ -178,7 +149,6 @@ def build_callback_payload(
             "phash": img.phash,
             "embedding": img.embedding,
         }
-        # Dump sub-stages results if present
         if img.safety:
             row["safety"] = img.safety.model_dump()
         if img.relevance:
@@ -200,7 +170,6 @@ def build_callback_payload(
         images=images_out,
         errors=[e.model_dump() for e in result.errors],
     )
-    # Add optional context IDs to the callback
     if result.listing_id:
         payload.listingId = result.listing_id
     if result.owned_pet_id:

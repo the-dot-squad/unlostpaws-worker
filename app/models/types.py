@@ -24,6 +24,14 @@ class RelevancePrediction:
 
 
 @dataclass
+class MatchPrediction:
+    """Combined embedding and optional relevance from one vision forward pass."""
+
+    embedding: list[float]
+    relevance: RelevancePrediction | None = None
+
+
+@dataclass
 class NsfwPrediction:
     """Result wrapper for NSFW safety classification."""
 

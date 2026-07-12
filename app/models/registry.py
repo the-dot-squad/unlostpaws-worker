@@ -17,10 +17,18 @@ from app.models.execution_providers import (
     get_active_provider,
     get_last_resolved_providers,
 )
-from app.models.factory import create_classifier, create_embedder, resolve_torch_device
-
-__all__ = ["resolve_torch_device", "create_embedder", "create_classifier"]
+from app.models.factory import (
+    create_classifier,
+    create_embedder,
+    resolve_torch_device,
+)
 from app.models.protocols import ClassifierBackend, EmbedderBackend
+
+__all__ = [
+    "resolve_torch_device",
+    "create_embedder",
+    "create_classifier",
+]
 
 logger = logging.getLogger(__name__)
 

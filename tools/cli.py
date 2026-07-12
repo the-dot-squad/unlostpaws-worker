@@ -18,6 +18,7 @@ import json
 from tools._console import err, out
 from tools.benchmark import DEFAULT_PROFILES, run_benchmarks, run_single
 from tools.doctor import detect_and_recommend, print_report, validate_profile
+from tools.eval import run_eval
 from tools.export import main as export_main
 from tools.smoke import run_smoke
 from tools.validate import main as validate_main
@@ -35,13 +36,15 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         out(json.dumps(result, indent=2))
         return 0 if result.get("ok") else 1
 
-    hardware, profile, run_hint, warnings = detect_and_recommend()
-    print_report(hardware, profile, run_hint, warnings)
+    hardware, config = detect_and_recommend()
+    print_report(hardware, config)
     try:
-        validate_profile(profile)
+        validate_profile(config.vision_profile)
     except SystemExit as exc:
         # Recommendation may not be runnable on this host (e.g. GPU profile on a laptop).
-        err(f"\nNote: preflight failed for VISION_PROFILE={profile} on this host.")
+        err(
+            f"\nNote: preflight failed for VISION_PROFILE={config.vision_profile} on this host."
+        )
         code = exc.code if isinstance(exc.code, int) else 1
         return code
     return 0
@@ -84,7 +87,7 @@ def build_parser() -> argparse.ArgumentParser:
     smoke.set_defaults(func=_cmd_smoke)
 
     bench = sub.add_parser("benchmark", help="Measure per-stage inference latency")
-    bench.add_argument("--profile", default="cpu-quality")
+    bench.add_argument("--profile", default="quality")
     bench.add_argument("--runs", type=int, default=5)
     bench.add_argument("--images", default="tests/fixtures/images")
     bench.add_argument("--all", action="store_true", help="Benchmark multiple profiles")
@@ -114,6 +117,15 @@ def build_parser() -> argparse.ArgumentParser:
         )
 
     val.set_defaults(func=_validate_cmd)
+
+    eval_cmd = sub.add_parser("eval", help="Evaluate relevance on fixture subset")
+    eval_cmd.add_argument("--profile", default="quality")
+    eval_cmd.add_argument("--fixtures", default="tests/fixtures/eval")
+
+    def _eval_cmd(args: argparse.Namespace) -> int:
+        return run_eval(args.profile, ROOT / args.fixtures)
+
+    eval_cmd.set_defaults(func=_eval_cmd)
 
     return parser
 
