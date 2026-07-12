@@ -87,6 +87,8 @@ class Settings:
     relevance_temp_scale: float
     relevance_threshold: float
     relevance_margin_threshold: float
+    max_image_pixels: int
+
 
     @property
     def requires_cuda(self) -> bool:
@@ -218,6 +220,7 @@ def load_settings() -> Settings:
         relevance_temp_scale=relevance_temp_scale,
         relevance_threshold=relevance_threshold,
         relevance_margin_threshold=relevance_margin_threshold,
+        max_image_pixels=int(os.getenv("MAX_IMAGE_PIXELS", "89478485")),
     )
 
 

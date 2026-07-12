@@ -91,7 +91,27 @@ async def handle_job(redis_client: aioredis.Redis, job: dict) -> None:
     Orchestrates the processing of a single job.
     Executes the pipeline, maps payloads, fires callbacks, and manages retries/DLQ on failure.
     """
-    payload = parse_job(job)
+    try:
+        payload = parse_job(job)
+    except Exception as exc:
+        logger.exception(
+            "Job payload validation failed",
+            extra={
+                "metric": "job_processed",
+                "job_type": job.get("jobType", "unknown"),
+                "status": "validation_failure",
+                "error": str(exc),
+            }
+        )
+        await send_to_dlq(redis_client, job, f"Validation error: {exc}")
+        webhook_url = job.get("webhookUrl")
+        if webhook_url:
+            try:
+                await send_failure_callback(webhook_url, job, f"Validation error: {exc}")
+            except Exception as cb_exc:
+                logger.exception("Failure callback failed for invalid job: %s", cb_exc)
+        raise
+
     job_data = payload.model_dump(mode="python")
 
     job_type = payload.jobType
@@ -110,6 +130,7 @@ async def handle_job(redis_client: aioredis.Redis, job: dict) -> None:
     if not webhook_url:
         raise ValueError("Job payload is missing webhookUrl")
 
+    t0 = time.perf_counter()
     try:
         result = await run_pipeline(job_data)
 
@@ -123,13 +144,44 @@ async def handle_job(redis_client: aioredis.Redis, job: dict) -> None:
         # 4. POST the results back to the Next.js API endpoint
         await send_callback(webhook_url, payload)
 
+        duration = time.perf_counter() - t0
+        logger.info(
+            "Job processed successfully in %.2fs",
+            duration,
+            extra={
+                "metric": "job_processed",
+                "job_type": job_type,
+                "listing_id": listing_id,
+                "duration_sec": round(duration, 4),
+                "status": "success",
+                "image_count": len(result.images),
+                "error_count": len(result.errors),
+                "execution_provider": settings.execution_provider,
+                "runtime": settings.runtime,
+            }
+        )
+
         if result.errors:
             logger.warning(
                 "Job finished with %d partial image errors",
                 len(result.errors),
             )
     except Exception as exc:
-        logger.exception("Job failed")
+        duration = time.perf_counter() - t0
+        logger.exception(
+            "Job failed in %.2fs",
+            duration,
+            extra={
+                "metric": "job_processed",
+                "job_type": job_type,
+                "listing_id": listing_id,
+                "duration_sec": round(duration, 4),
+                "status": "failure",
+                "error": str(exc),
+                "execution_provider": settings.execution_provider,
+                "runtime": settings.runtime,
+            }
+        )
         next_attempt = attempt + 1
 
         # Evaluate retry limits

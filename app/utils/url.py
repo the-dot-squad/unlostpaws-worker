@@ -1,4 +1,5 @@
 import os
+from urllib.parse import urlparse, urlunparse
 
 
 def rewrite_local_url(url: str) -> str:
@@ -7,8 +8,17 @@ def rewrite_local_url(url: str) -> str:
     inside a Docker container to allow reaching the host services.
     """
     if os.path.exists("/.dockerenv") or os.environ.get("RUNNING_IN_DOCKER") == "true":
-        if "localhost" in url:
-            return url.replace("localhost", "host.docker.internal", 1)
-        if "127.0.0.1" in url:
-            return url.replace("127.0.0.1", "host.docker.internal", 1)
+        try:
+            parsed = urlparse(url)
+            netloc = parsed.netloc
+            hostname = parsed.hostname
+            if hostname == "localhost":
+                new_netloc = netloc.replace("localhost", "host.docker.internal", 1)
+                return urlunparse(parsed._replace(netloc=new_netloc))
+            elif hostname == "127.0.0.1":
+                new_netloc = netloc.replace("127.0.0.1", "host.docker.internal", 1)
+                return urlunparse(parsed._replace(netloc=new_netloc))
+        except Exception:
+            pass
     return url
+

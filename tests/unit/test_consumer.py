@@ -205,3 +205,32 @@ async def test_handle_job_failure_retry_then_dlq():
             mock_redis.xadd.assert_called_once()
         finally:
             object.__setattr__(settings, "max_attempts", orig_max_attempts)
+
+
+@pytest.mark.asyncio
+async def test_handle_job_validation_error():
+    mock_redis = MagicMock()
+    mock_redis.xadd = AsyncMock()
+
+    # Missing imageUrls (fundamentally invalid job format)
+    job = {
+        "jobType": "listing",
+        "webhookUrl": "http://example.com/webhook",
+    }
+
+    with patch("app.queue.consumer.send_failure_callback") as mock_fail_cb:
+        from pydantic import ValidationError
+        with pytest.raises(ValidationError):
+            await handle_job(mock_redis, job)
+
+        mock_redis.xadd.assert_called_once()
+        called_args = mock_redis.xadd.call_args[0]
+        assert called_args[0] == "unlostpaws:stream:vision-processing:dlq"
+        assert "Validation error" in called_args[1]["error"]
+
+        mock_fail_cb.assert_called_once()
+        args = mock_fail_cb.call_args[0]
+        assert args[0] == "http://example.com/webhook"
+        assert args[1] == job
+        assert "Validation error" in args[2]
+

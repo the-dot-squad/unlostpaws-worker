@@ -108,6 +108,27 @@ def test_decode_image():
     assert decoded.image.size == (1, 1)
 
 
+def test_decode_image_decompression_bomb():
+    from io import BytesIO
+    from PIL.Image import DecompressionBombError
+
+    # Temporarily set MAX_IMAGE_PIXELS to 1 pixel to trigger decompression bomb error
+    old_limit = Image.MAX_IMAGE_PIXELS
+    Image.MAX_IMAGE_PIXELS = 1
+    try:
+        # Create a 2x2 image (which is 4 pixels, exceeding the limit of 1)
+        img = Image.new("RGB", (2, 2), color="blue")
+        buf = BytesIO()
+        img.save(buf, format="PNG")
+        png_bytes = buf.getvalue()
+
+        with pytest.raises(DecompressionBombError):
+            decode_image("http://example.com/bomb.png", png_bytes)
+    finally:
+        Image.MAX_IMAGE_PIXELS = old_limit
+
+
+
 @pytest.mark.asyncio
 async def test_download_all_mixed_results():
     from io import BytesIO

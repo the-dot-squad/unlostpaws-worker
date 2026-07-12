@@ -15,6 +15,9 @@ import httpx
 from PIL import Image
 
 from app.config.settings import settings
+
+# Enforce decompression bomb limits globally
+Image.MAX_IMAGE_PIXELS = settings.max_image_pixels
 from app.utils.url import rewrite_local_url
 
 logger = logging.getLogger(__name__)

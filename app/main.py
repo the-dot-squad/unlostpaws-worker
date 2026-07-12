@@ -26,10 +26,9 @@ from app.models.registry import warmup
 from app.queue.consumer import create_redis_client, run_consumer
 from app.pipeline.download import close_http_client
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-)
+from app.utils.telemetry import setup_logging
+
+setup_logging()
 logger = logging.getLogger(__name__)
 
 # Event signal utilized to broadcast shutdown requests to concurrent async tasks
