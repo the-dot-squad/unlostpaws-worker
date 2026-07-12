@@ -101,13 +101,15 @@ async def handle_job(redis_client: aioredis.Redis, job: dict) -> None:
                 "job_type": job.get("jobType", "unknown"),
                 "status": "validation_failure",
                 "error": str(exc),
-            }
+            },
         )
         await send_to_dlq(redis_client, job, f"Validation error: {exc}")
         webhook_url = job.get("webhookUrl")
         if webhook_url:
             try:
-                await send_failure_callback(webhook_url, job, f"Validation error: {exc}")
+                await send_failure_callback(
+                    webhook_url, job, f"Validation error: {exc}"
+                )
             except Exception as cb_exc:
                 logger.exception("Failure callback failed for invalid job: %s", cb_exc)
         raise
@@ -158,7 +160,7 @@ async def handle_job(redis_client: aioredis.Redis, job: dict) -> None:
                 "error_count": len(result.errors),
                 "execution_provider": settings.execution_provider,
                 "runtime": settings.runtime,
-            }
+            },
         )
 
         if result.errors:
@@ -180,7 +182,7 @@ async def handle_job(redis_client: aioredis.Redis, job: dict) -> None:
                 "error": str(exc),
                 "execution_provider": settings.execution_provider,
                 "runtime": settings.runtime,
-            }
+            },
         )
         next_attempt = attempt + 1
 

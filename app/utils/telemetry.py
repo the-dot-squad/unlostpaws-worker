@@ -30,10 +30,28 @@ class StructuredJsonFormatter(logging.Formatter):
         # In Python logging, record.__dict__ contains custom fields passed in extra={...}
         # Standard LogRecord attributes to ignore when copying extra
         ignored_attrs = {
-            "args", "asctime", "created", "exc_info", "exc_text", "filename",
-            "funcName", "levelname", "levelno", "lineno", "module", "msecs",
-            "message", "msg", "name", "pathname", "process", "processName",
-            "relativeCreated", "stack_info", "thread", "threadName"
+            "args",
+            "asctime",
+            "created",
+            "exc_info",
+            "exc_text",
+            "filename",
+            "funcName",
+            "levelname",
+            "levelno",
+            "lineno",
+            "module",
+            "msecs",
+            "message",
+            "msg",
+            "name",
+            "pathname",
+            "process",
+            "processName",
+            "relativeCreated",
+            "stack_info",
+            "thread",
+            "threadName",
         }
 
         for key, value in record.__dict__.items():
@@ -55,7 +73,7 @@ def setup_logging() -> None:
     log_format = os.getenv("LOG_FORMAT", "text").strip().lower()
 
     root_logger = logging.getLogger()
-    
+
     # Remove existing handlers to avoid duplicate log entries
     for handler in list(root_logger.handlers):
         root_logger.removeHandler(handler)

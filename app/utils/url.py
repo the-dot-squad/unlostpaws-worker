@@ -21,4 +21,3 @@ def rewrite_local_url(url: str) -> str:
         except Exception:
             pass
     return url
-

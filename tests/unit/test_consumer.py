@@ -220,6 +220,7 @@ async def test_handle_job_validation_error():
 
     with patch("app.queue.consumer.send_failure_callback") as mock_fail_cb:
         from pydantic import ValidationError
+
         with pytest.raises(ValidationError):
             await handle_job(mock_redis, job)
 
@@ -233,4 +234,3 @@ async def test_handle_job_validation_error():
         assert args[0] == "http://example.com/webhook"
         assert args[1] == job
         assert "Validation error" in args[2]
-
